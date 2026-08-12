@@ -16,7 +16,7 @@ Grid cells are a type of neuron found in mammalian brains, particularly in the e
 
 ## Models for Grid Cells
 
-### Oscillatory Interference Model [https://www.ovid.com/10.1002/hipo.20327]
+### Oscillatory Interference Model [Burgess, N., Barry, C., & O'Keefe, J. (2007).](https://www.ovid.com/10.1002/hipo.20327)
 The oscillatory interference model suggests that grid cell firing patterns arise from the interference of multiple oscillatory inputs. These oscillations can be influenced by the animal's movement and speed, leading to the formation of the hexagonal grid pattern. This is often expressed as
 $$
     \omega_s=\omega_0 + s \cdot \beta,
@@ -30,7 +30,7 @@ Thus, the phase difference is proportional to the distance travelled by the anim
 
 Combining oscillators with different directional preferences can lead to the formation of a hexagonal grid pattern, as the interference of these oscillations creates peaks in firing at specific spatial locations.
 
-### Continuous Attractor Network Model [https://dx.plos.org/10.1371/journal.pcbi.1000291]
+### Continuous Attractor Network Model [Burak, Yoram & Fiete, Ila R. (2009)](https://dx.plos.org/10.1371/journal.pcbi.1000291)
 The continuous attractor network model proposes that grid cells are part of a network of neurons that maintain a stable representation of space through recurrent connections. In this model, the activity of grid cells is influenced by the activity of neighbouring cells, allowing for the formation of a continuous representation of the environment. This representation can be thought of as a "bump" of activity that moves across the network as the animal navigates through space. 
 
 ### Hybrid Model
