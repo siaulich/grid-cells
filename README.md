@@ -1,0 +1,37 @@
+# Grid Cells
+This repository contains simple Python implementations of the Oscillatory Interference (OI) and Continuous Attractor Network (CAN) models for grid cells. The code is designed to simulate the firing patterns of grid cells in a 2D environment, allowing for exploration of their unique properties and behaviours.
+
+
+
+# Background
+
+## Overview
+Grid cells are a type of neuron found in mammalian brains, particularly in the entorhinal cortex. They bare their name due to their unique firing patterns, which form a hexagonal grid-like representation of the environment.
+
+## Features
+- **Hexagonal Firing Pattern**: Grid cells fire in a hexagonal pattern, allowing for efficient spatial representation and navigation.
+- **Movement Independent**: Grid cells maintain their firing patterns regardless of the animal's movement direction or speed, providing a stable spatial map.
+- **Phase Precession**: Grid cells exhibit phase precession, where the timing of their firing shifts in relation to the animal's position within the grid, enhancing spatial encoding.
+- **Variable Scale**: Grid cells can operate at different scales, allowing for the representation of both small and large environments.
+
+## Models for Grid Cells
+
+### Oscillatory Interference Model [https://www.ovid.com/10.1002/hipo.20327]
+The oscillatory interference model suggests that grid cell firing patterns arise from the interference of multiple oscillatory inputs. These oscillations can be influenced by the animal's movement and speed, leading to the formation of the hexagonal grid pattern. This is often expressed as
+$$
+    \omega_s=\omega_0 + s \cdot \beta,
+$$
+where $\omega_0$ is the base frequency, $s$ is the speed of the animal, and $\beta$ is a scaling factor.
+Thus, the phase difference between two oscillators can be expressed as
+$$
+    \Delta \phi = \int(\omega_0 - \omega_s)dt = \int (\omega_0 - (\omega_0 + s \cdot \beta))dt = \beta\int sdt.
+$$
+Thus, the phase difference is proportional to the distance travelled by the animal, leading to the formation of a grid-like firing pattern.
+
+Combining oscillators with different directional preferences can lead to the formation of a hexagonal grid pattern, as the interference of these oscillations creates peaks in firing at specific spatial locations.
+
+### Continuous Attractor Network Model [https://dx.plos.org/10.1371/journal.pcbi.1000291]
+The continuous attractor network model proposes that grid cells are part of a network of neurons that maintain a stable representation of space through recurrent connections. In this model, the activity of grid cells is influenced by the activity of neighbouring cells, allowing for the formation of a continuous representation of the environment. This representation can be thought of as a "bump" of activity that moves across the network as the animal navigates through space. 
+
+### Hybrid Model
+While the OI uses the phase of a single oscillator to encode position, the CAN model uses the activity of a population of neurons to encode position. The hybrid model combines these two approaches. More specifically, it encodes the integrated position with respect to a certain position not in a single oscillator but in a population of oscillators. VCOs with the same directional depenence are grouped together and offset by a temporal phase. Thus, the position of an activity bump in the group of VCOs encodes the position.

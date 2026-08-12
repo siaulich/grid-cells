@@ -1,0 +1,8 @@
+numpy
+matplotlib
+scipy
+jupyter
+ipython
+black
+tqdm
+black[jupyter]
