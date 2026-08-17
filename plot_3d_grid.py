@@ -12,9 +12,9 @@ fig = plt.figure(figsize=(10, 8))
 ax = fig.add_subplot(111, projection="3d")
 
 # Create coordinate grids for the 3D array
-#ax.plot(position[:, 0], position[:, 1], zs=position[:, 2])
+# ax.plot(position[:, 0], position[:, 1], zs=position[:, 2])
 nbins = 50
-s,( x,y,z) = activity_map(position, recorded_sample_neuron,nbins = nbins)
+s, (x, y, z) = activity_map(position, recorded_sample_neuron, nbins=nbins)
 coords = np.where(s > 0.5 * np.max(s))
 ax.scatter(
     coords[0] / nbins * (x[-1] - x[0]) + x[0],
