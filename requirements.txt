@@ -6,3 +6,4 @@ ipython
 black
 tqdm
 black[jupyter]
+nbstripout
