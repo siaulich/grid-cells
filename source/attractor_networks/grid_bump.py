@@ -116,7 +116,7 @@ class ToroidZhang1996:
         self.dt = dt
 
         self.beta = 3.0 / periodicity**2
-        self.gamma = 0.1 / n
+        self.gamma = 1.05 * self.beta
         self.a_weight = 1
         self.inhibition = 1
         self.inhibition = 1
@@ -158,7 +158,7 @@ class ToroidZhang1996:
         dnorm = np.max(np.abs(dK_dx))
         return target_gain * self.tau * dnorm / norm
 
-    def _build_kernels(self, n, l_shift):
+    def _build_kernels(self, n):
         dx, dy = self._distance_grid(n)
         r2 = dx ** 2 + dy ** 2
  
@@ -170,8 +170,8 @@ class ToroidZhang1996:
  
         norm = np.max(np.abs(K_sym))
         dnorm = max(np.max(np.abs(dK_dx)), np.max(np.abs(dK_dy)), 1e-12)
-        K_asym_x = l_shift * (dK_dx / dnorm) * norm
-        K_asym_y = l_shift * (dK_dy / dnorm) * norm
+        K_asym_x = self.l_shift * (dK_dx / dnorm) * norm
+        K_asym_y = self.l_shift * (dK_dy / dnorm) * norm
  
         K_sym = np.fft.ifftshift(K_sym)
         K_asym_x = np.fft.ifftshift(K_asym_x)

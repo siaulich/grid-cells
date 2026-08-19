@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Tuple
+from typing import Tuple, Dict,Optional
 
 
 def generate_random_walk(
@@ -171,4 +171,176 @@ def generate_head_direction_walk(
 
     return toroidal_to_solid_angle(np.stack([azimuth, pitch],axis=-1)), np.stack([azimuth_velocity,pitch_velocity],axis=-1), time
 
+
+# def generate_bat_flight(
+#     T,
+#     dt = 0.1e-3,
+#     boxsize = 3,
+#     head_direction_turn_interval = 20e-3,
+#     head_turning_std = 0.2,
+#     wall_clearence = 0.2,
+#     max_speed = 5,
+#     rng = np.random.default_rng(seed=69),
+# ) -> Dict[str,np.ndarray]:
+#     n_steps = int(np.ceil(T/dt))
+#     head_direction_turn_steps = int(np.ceil(head_direction_turn_interval / dt))
+
+#     position = np.zeros((n_steps,3))
+#     velocity = np.zeros((n_steps,3))
+#     heading = np.zeros((n_steps, 2))
+#     heading_velocity = np.zeros((n_steps,2))
+#     time = np.zeros(n_steps)
+#     current_position = np.ones(3) * boxsize / 2
+#     current_time = 0
+#     current_speed = max_speed / 2
+#     current_heading = np.random.uniform(size = 3)
+#     current_heading /= np.linalg.norm(current_heading)
+
+#     position[0] = current_position
+#     velocity[0] = current_heading * current_speed
+#     heading[0] = np.array([
+#             np.arctan2(current_heading[1], current_heading[0]),
+#             np.arccos(np.clip(current_heading[2], -1.0, 1.0)),
+#         ])
+#     for step in range(1,n_steps):
+#         if step % head_direction_turn_steps == 1:
+#             # Zero out the critical components
+#             upper_wall_mask = (current_position + wall_clearence) > boxsize
+#             lower_wall_mask =  (current_position - wall_clearence) < 0 
+#             heading_udpate = np.random.normal(size=3) * head_turning_std
+#             heading_udpate[upper_wall_mask] = -head_turning_std
+#             heading_udpate[lower_wall_mask] = head_turning_std
+
+#         new_heading = current_heading + heading_udpate
+#         new_heading /= np.linalg.norm(new_heading)
+#         speed = max_speed
+#         velocity[step] = speed * new_heading
+#         position[step] = position[step - 1] + velocity[step] * dt
+#         current_position = position[step]
+#         heading[step] = np.array([
+#             np.arctan2(new_heading[1], new_heading[0]),
+#             np.arccos(np.clip(new_heading[2], -1.0, 1.0)),
+#         ])
+#         heading_delta = (
+#             heading[step] - heading[step - 1] + np.pi
+#         ) % (2 * np.pi) - np.pi
+#         heading_velocity[step] = heading_delta / dt
+#         current_heading = new_heading
+#         current_time += dt
+#     return {"pos": position, "vel": velocity, "dir": heading, "dir_vel": heading_velocity, "time": time}
+
+
+
+
+def generate_bat_flight(
+    T: float,
+    dt: float = 0.1e-3,
+    boxsize: float = 3.0,
+    turn_correlation_time: float = 0.05,
+    turning_std: float = 5.0,
+    speed_mean: float = 3.0,
+    speed_std: float = 1.5,
+    speed_correlation_time: float = 0.5,
+    min_speed: float = 0.3,
+    max_speed: float = 7.0,
+    wall_clearance: float = 0.4,
+    wall_repulsion_strength: float = 3.0,
+    initial_position: Optional[np.ndarray] = None,
+    initial_heading: Optional[np.ndarray] = None,
+    rng: Optional[np.random.Generator] = None,
+) -> Dict[str, np.ndarray]:
+    if rng is None:
+        rng = np.random.default_rng()
+
+    n_steps = int(np.ceil(T / dt))
+
+    position = np.zeros((n_steps, 3))
+    velocity = np.zeros((n_steps, 3))
+    heading = np.zeros((n_steps, 2))
+    heading_velocity = np.zeros((n_steps, 2))
+    time = np.arange(n_steps) * dt
+
+    # --- initial state ---
+    if initial_position is None:
+        current_position = np.ones(3) * boxsize / 2
+    else:
+        current_position = np.array(initial_position, dtype=float).copy()
+
+    if initial_heading is None:
+        current_heading = rng.normal(size=3)
+        current_heading /= np.linalg.norm(current_heading)
+    else:
+        current_heading = np.array(initial_heading, dtype=float)
+        current_heading /= np.linalg.norm(current_heading)
+
+    current_speed = speed_mean
+    steering = np.zeros(3)  # OU "angular velocity" state driving turns
+
+    def wall_repulsion(pos: np.ndarray) -> np.ndarray:
+        """
+        Soft steering push away from any wall within wall_clearance.
+
+        Penetration is squared (not linear) so the push is gentle until
+        the agent is genuinely close to a wall, and it's capped at
+        `wall_repulsion_strength` per axis so it nudges the stochastic
+        steering rather than overpowering it and causing deterministic
+        billiard-ball-style bouncing.
+        """
+        lower_pen = np.clip(wall_clearance - pos, 0, None) / wall_clearance
+        upper_pen = np.clip(wall_clearance - (boxsize - pos), 0, None) / wall_clearance
+        return wall_repulsion_strength * (lower_pen**2 - upper_pen**2)
+
+    def heading_to_angles(h: np.ndarray) -> np.ndarray:
+        return np.array(
+            [np.arctan2(h[1], h[0]), np.arccos(np.clip(h[2], -1.0, 1.0))]
+        )
+
+    ou_turn_decay = np.exp(-dt / turn_correlation_time)
+    ou_turn_noise_scale = turning_std * np.sqrt(1 - ou_turn_decay**2)
+
+    ou_speed_decay = np.exp(-dt / speed_correlation_time)
+    ou_speed_noise_scale = speed_std * np.sqrt(1 - ou_speed_decay**2)
+
+    position[0] = current_position
+    velocity[0] = current_heading * current_speed
+    heading[0] = heading_to_angles(current_heading)
+
+    for step in range(1, n_steps):
+        # --- speed: bounded OU process ---
+        speed_noise = ou_speed_noise_scale * rng.normal()
+        current_speed = (
+            speed_mean + (current_speed - speed_mean) * ou_speed_decay + speed_noise
+        )
+        current_speed = np.clip(current_speed, min_speed, max_speed)
+
+        # --- steering: OU process on angular velocity + wall repulsion bias ---
+        turn_noise = ou_turn_noise_scale * rng.normal(size=3)
+        steering = steering * ou_turn_decay + turn_noise
+        steering = steering + wall_repulsion(current_position)
+
+        # keep only the component that rotates heading (tangent to the sphere)
+        tangential = steering - np.dot(steering, current_heading) * current_heading
+
+        new_heading = current_heading + tangential * dt
+        new_heading /= np.linalg.norm(new_heading)
+
+        velocity[step] = new_heading * current_speed
+        current_position = current_position + velocity[step] * dt
+        current_position = np.clip(current_position, 0.0, boxsize)  # safety net
+
+        position[step] = current_position
+        heading[step] = heading_to_angles(new_heading)
+
+        heading_delta = (heading[step] - heading[step - 1] + np.pi) % (2 * np.pi) - np.pi
+        heading_velocity[step] = heading_delta / dt
+
+        current_heading = new_heading
+
+    return {
+        "pos": position,
+        "vel": velocity,
+        "dir": heading,
+        "dir_vel": heading_velocity,
+        "time": time,
+    }
 
