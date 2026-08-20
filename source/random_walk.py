@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Tuple, Dict,Optional
+from typing import Tuple, Dict, Optional
 import tqdm
 
 
@@ -110,8 +110,6 @@ def toroidal_to_solid_angle(toroidal_angles: np.ndarray) -> np.ndarray:
     return np.stack([phi, theta], axis=-1)
 
 
-
-
 def generate_head_direction_walk(
     T,
     dt=0.5e-3,
@@ -137,8 +135,7 @@ def generate_head_direction_walk(
     """
     n_steps = int(np.ceil(T / dt))
     heading_update_steps = max(1, int(heading_update_interval / dt))
-    #time_for_turn_steps = max(heading_update_steps, int(time_for_turn / dt))
-
+    # time_for_turn_steps = max(heading_update_steps, int(time_for_turn / dt))
 
     time = np.arange(n_steps) * dt
     azimuth = np.zeros(n_steps)
@@ -160,17 +157,21 @@ def generate_head_direction_walk(
             azimuth_step = rng.normal(0, turn_std_azimuth)
             pitch_step = rng.normal(0, turn_std_pitch)
 
-
-        current_azimuth = (current_azimuth + azimuth_step * dt + np.pi) % (2 * np.pi) - np.pi
-        current_pitch = (current_pitch +  pitch_step * dt + np.pi) % (2 * np.pi) - np.pi
+        current_azimuth = (current_azimuth + azimuth_step * dt + np.pi) % (
+            2 * np.pi
+        ) - np.pi
+        current_pitch = (current_pitch + pitch_step * dt + np.pi) % (2 * np.pi) - np.pi
 
         azimuth[step_iter] = current_azimuth
         pitch[step_iter] = current_pitch
         azimuth_velocity[step_iter] = azimuth_step
         pitch_velocity[step_iter] = pitch_step
 
-
-    return toroidal_to_solid_angle(np.stack([azimuth, pitch],axis=-1)), np.stack([azimuth_velocity,pitch_velocity],axis=-1), time
+    return (
+        toroidal_to_solid_angle(np.stack([azimuth, pitch], axis=-1)),
+        np.stack([azimuth_velocity, pitch_velocity], axis=-1),
+        time,
+    )
 
 
 # def generate_bat_flight(
@@ -207,7 +208,7 @@ def generate_head_direction_walk(
 #         if step % head_direction_turn_steps == 1:
 #             # Zero out the critical components
 #             upper_wall_mask = (current_position + wall_clearence) > boxsize
-#             lower_wall_mask =  (current_position - wall_clearence) < 0 
+#             lower_wall_mask =  (current_position - wall_clearence) < 0
 #             heading_udpate = np.random.normal(size=3) * head_turning_std
 #             heading_udpate[upper_wall_mask] = -head_turning_std
 #             heading_udpate[lower_wall_mask] = head_turning_std
@@ -231,27 +232,25 @@ def generate_head_direction_walk(
 #     return {"pos": position, "vel": velocity, "dir": heading, "dir_vel": heading_velocity, "time": time}
 
 
-
-
 def generate_bat_flight(
     T: float,
     dt: float = 0.1e-3,
     boxsize: float = 5.0,
-    turning_std: float = 0.04,
+    turning_std: float = 0.001,
     speed_mean: float = 1.0,
     speed_std: float = 1.5,
     speed_correlation_time: float = 0.5,
-    min_speed: float = 0.3,
     max_speed: float = 3.0,
-    #wall_clearance: float = 2.5,
-    wall_repulsion_strength: float = 0.02,
+    wall_repulsion_strength: float = 0.01,
     initial_position: Optional[np.ndarray] = None,
     initial_heading: Optional[np.ndarray] = None,
     rng: Optional[np.random.Generator] = None,
 ) -> Dict[str, np.ndarray]:
     if rng is None:
         rng = np.random.default_rng()
-    wall_clearance = boxsize / 2
+    turn_clearance = boxsize / 2
+    slow_clearance = boxsize / 3
+
     n_steps = int(np.ceil(T / dt))
 
     position = np.zeros((n_steps, 3))
@@ -273,17 +272,15 @@ def generate_bat_flight(
         current_heading /= np.linalg.norm(current_heading)
 
     current_speed = speed_mean
-    steering = np.zeros(3) 
+    steering = np.zeros(3)
 
     def wall_repulsion(pos: np.ndarray) -> np.ndarray:
-        lower_pen = (wall_clearance - pos > 0).astype(float)
-        upper_pen = (wall_clearance - (boxsize - pos) > 0).astype(float)
+        lower_pen = (turn_clearance - pos > 0).astype(float)
+        upper_pen = (turn_clearance - (boxsize - pos) > 0).astype(float)
         return wall_repulsion_strength * (lower_pen**2 - upper_pen**2)
 
     def heading_to_angles(h: np.ndarray) -> np.ndarray:
-        return np.array(
-            [np.arctan2(h[1], h[0]), np.arccos(np.clip(h[2], -1.0, 1.0))]
-        )
+        return np.array([np.arctan2(h[1], h[0]), np.arccos(np.clip(h[2], -1.0, 1.0))])
 
     ou_speed_decay = np.exp(-dt / speed_correlation_time)
     ou_speed_noise_scale = speed_std * np.sqrt(1 - ou_speed_decay**2)
@@ -293,23 +290,38 @@ def generate_bat_flight(
     heading[0] = heading_to_angles(current_heading)
 
     for step in tqdm.tqdm(range(1, n_steps)):
-        #speed_noise = ou_speed_noise_scale * np.clip(rng.normal(),0,1)
-        boundary_distance = np.min(
-            np.minimum(current_position, boxsize - current_position)
-        )
-        boundary_factor = np.clip(boundary_distance / wall_clearance, 0.0, 1.0)
-        boundary_speed_mean = max_speed * boundary_factor
-        current_speed = boundary_speed_mean
+        turn_mask = (
+            (current_position - turn_clearance < 0) & (current_heading < 0)
+        ) | ((current_position + turn_clearance > boxsize) & (current_heading > 0))
 
-        wall_mask = ~((current_position - wall_clearance < 0) | (current_position + wall_clearance > boxsize))
-        turn_noise = turning_std * np.clip(rng.normal(size=3),-1,1) * wall_mask
-        steering = steering + turn_noise
-        steering = steering + wall_repulsion(current_position)
+        turn_noise = turning_std * np.clip(rng.normal(size=3), -1, 1) * (~turn_mask)
+        steering = steering + turn_noise + wall_repulsion(current_position) * turn_mask
 
         tangential = steering - np.dot(steering, current_heading) * current_heading
 
         new_heading = current_heading + tangential * dt
         new_heading /= np.linalg.norm(new_heading)
+
+        slow_mask = (
+            (current_position - slow_clearance < 0) & (current_heading < 0)
+        ) | ((current_position + slow_clearance > boxsize) & (current_heading > 0))
+
+        if np.any(slow_mask):
+            boundary_distance = np.min(
+                np.minimum(
+                    current_position[slow_mask], boxsize - current_position[slow_mask]
+                )
+            )
+            boundary_factor = np.clip(boundary_distance / slow_clearance, 0.0, 1.0)
+            current_speed -= (
+                current_speed * (1.0 - boundary_factor) * dt
+            )   * (1.0 - ou_speed_decay)
+        else:
+            speed_noise = ou_speed_noise_scale * rng.normal()
+            current_speed = (
+                speed_mean + ou_speed_decay * (current_speed - speed_mean) + speed_noise
+            )
+        current_speed = np.clip(current_speed, 0, max_speed)
 
         velocity[step] = new_heading * current_speed
         current_position = current_position + velocity[step] * dt
@@ -317,7 +329,9 @@ def generate_bat_flight(
         position[step] = current_position
         heading[step] = heading_to_angles(new_heading)
 
-        heading_delta = (heading[step] - heading[step - 1] + np.pi) % (2 * np.pi) - np.pi
+        heading_delta = (heading[step] - heading[step - 1] + np.pi) % (
+            2 * np.pi
+        ) - np.pi
         heading_velocity[step] = heading_delta / dt
 
         current_heading = new_heading
@@ -330,3 +344,276 @@ def generate_bat_flight(
         "time": time,
     }
 
+
+# from typing import Optional, Dict
+# import numpy as np
+# import tqdm
+
+
+# def generate_bat_flight(
+#     T: float,
+#     dt: float = 0.1e-3,
+#     boxsize: float = 5.0,
+#     turning_std: float = 1.0,
+#     turning_correlation_time: float = 0.2,
+#     speed_mean: float = 2.0,
+#     speed_std: float = 0.5,
+#     speed_correlation_time: float = 0.5,
+#     max_speed: float = 5.0,
+#     wall_repulsion_strength: float = 2.0,
+#     turn_clearance: Optional[float] = None,
+#     slow_clearance: Optional[float] = None,
+#     wall_turn_max: float = 3.0,
+#     max_angular_velocity: float = 4.0,
+#     max_angular_acceleration: Optional[float] = 100,
+#     wall_slow_speed: float = 0.5,
+#     rng: Optional[np.random.Generator] = None,
+# ) -> Dict[str, np.ndarray]:
+
+#     if rng is None:
+#         rng = np.random.default_rng()
+
+#     if turn_clearance is None:
+#         turn_clearance = boxsize / 4.0
+
+#     if slow_clearance is None:
+#         slow_clearance = boxsize / 2.0
+
+#     n_steps = int(np.ceil(T / dt))
+
+#     time = np.arange(n_steps) * dt
+
+#     speed_rho = np.exp(-dt / speed_correlation_time)
+#     speed_noise_scale = speed_std * np.sqrt(1.0 - speed_rho**2)
+
+#     turn_rho = np.exp(-dt / turning_correlation_time)
+#     turn_noise_scale = turning_std * np.sqrt(1.0 - turn_rho**2)
+
+#     position = np.zeros((n_steps, 3))
+#     velocity = np.zeros((n_steps, 3))
+#     heading_vectors = np.zeros((n_steps, 3))
+#     heading_angles = np.zeros((n_steps, 2))
+#     heading_angle_velocity = np.zeros((n_steps, 2))
+#     angular_velocity = np.zeros((n_steps, 3))
+#     speed_history = np.zeros(n_steps)
+
+#     current_position = np.ones(3) * boxsize / 2.0
+#     current_position = np.clip(
+#         current_position,
+#         0.0,
+#         boxsize,
+#     )
+#     current_heading = rng.normal(size=3)
+#     heading_norm = np.linalg.norm(current_heading)
+#     current_heading /= heading_norm
+#     current_speed = float(speed_mean)
+#     current_angular_velocity = np.zeros(3)
+
+#     def heading_to_angles(h: np.ndarray) -> np.ndarray:
+#         azimuth = np.arctan2(h[1], h[0])
+#         polar = np.arccos(np.clip(h[2], -1.0, 1.0))
+#         return np.array([azimuth, polar])
+
+#     def smooth_wall_force(pos: np.ndarray) -> np.ndarray:
+#         force = np.zeros(3)
+
+#         for axis in range(3):
+
+#             lower_distance = pos[axis]
+#             upper_distance = boxsize - pos[axis]
+
+#             if lower_distance < turn_clearance:
+#                 x = np.clip(
+#                     1.0 - lower_distance / turn_clearance,
+#                     0.0,
+#                     1.0,
+#                 )
+
+#                 force[axis] += x**2
+
+#             if upper_distance < turn_clearance:
+#                 x = np.clip(
+#                     1.0 - upper_distance / turn_clearance,
+#                     0.0,
+#                     1.0,
+#                 )
+
+#                 force[axis] -= x**2
+
+#         return force
+
+#     def wall_turning_velocity(
+#         pos: np.ndarray,
+#         h: np.ndarray,
+#     ) -> np.ndarray:
+#         """
+#         Convert the wall-repulsion vector into an angular velocity.
+
+#         The desired direction is away from the wall. The component
+#         perpendicular to the current heading produces turning.
+#         """
+
+#         away = smooth_wall_force(pos)
+#         norm = np.linalg.norm(away)
+    
+#         if norm < 1e-12:
+#             return np.zeros(3)
+
+#         away /= norm
+#         lateral = away - np.dot(away, h) * h
+#         lateral_norm = np.linalg.norm(lateral)
+
+#         if lateral_norm < 1e-12:
+#             return np.zeros(3)
+
+#         lateral /= lateral_norm
+#         omega = np.cross(h, lateral)
+#         omega_norm = np.linalg.norm(omega)
+
+#         if omega_norm > 1e-12:
+#             omega /= omega_norm
+
+#         force_magnitude = np.linalg.norm(smooth_wall_force(pos))
+#         omega *= wall_repulsion_strength * force_magnitude
+#         return omega
+
+#     def wall_speed_factor(pos: np.ndarray) -> float:
+
+#         distances = np.concatenate(
+#             [
+#                 pos,
+#                 boxsize - pos,
+#             ]
+#         )
+#         nearest_distance = np.min(distances)
+#         if nearest_distance >= slow_clearance:
+#             return 1.0
+#         x = np.clip(
+#             nearest_distance / slow_clearance,
+#             0.0,
+#             1.0,
+#         )
+#         smooth = x * x * (3.0 - 2.0 * x)
+#         return wall_slow_speed + (1.0 - wall_slow_speed) * smooth
+
+#     position[0] = current_position
+#     heading_vectors[0] = current_heading
+#     velocity[0] = current_heading * current_speed
+#     heading_angles[0] = heading_to_angles(current_heading)
+
+#     speed_history[0] = current_speed
+
+#     for step in tqdm.tqdm(
+#         range(1, n_steps),
+#         desc="Generating flight",
+#     ):
+
+#         speed_noise = speed_noise_scale * rng.normal()
+
+#         current_speed = (
+#             speed_mean + speed_rho * (current_speed - speed_mean) + speed_noise
+#         )
+
+#         wall_factor = wall_speed_factor(current_position)
+
+#         target_speed = speed_mean * wall_factor
+
+#         current_speed += (target_speed - current_speed) * (dt / speed_correlation_time)
+
+#         current_speed = np.clip(
+#             current_speed,
+#             0.0,
+#             max_speed,
+#         )
+
+#         turn_noise = turn_noise_scale * rng.normal(size=3)
+
+#         current_angular_velocity = turn_rho * current_angular_velocity + turn_noise
+
+#         wall_omega = wall_turning_velocity(
+#             current_position,
+#             current_heading,
+#         )
+
+#         wall_omega_norm = np.linalg.norm(wall_omega)
+
+#         if wall_omega_norm > wall_turn_max:
+#             wall_omega *= wall_turn_max / wall_omega_norm
+
+#         desired_angular_velocity = current_angular_velocity + wall_omega
+
+#         if max_angular_acceleration is not None:
+#             delta_omega = desired_angular_velocity - current_angular_velocity
+#             delta_norm = np.linalg.norm(delta_omega)
+#             max_delta = max_angular_acceleration * dt
+#             if delta_norm > max_delta:
+#                 delta_omega *= max_delta / delta_norm
+
+#             current_angular_velocity += delta_omega
+
+#         else:
+#             current_angular_velocity = desired_angular_velocity
+
+#         omega_norm = np.linalg.norm(current_angular_velocity)
+
+#         if omega_norm > max_angular_velocity:
+
+#             current_angular_velocity *= max_angular_velocity / omega_norm
+
+#         heading_derivative = np.cross(
+#             current_angular_velocity,
+#             current_heading,
+#         )
+
+#         new_heading = current_heading + heading_derivative * dt
+
+#         new_heading_norm = np.linalg.norm(new_heading)
+
+#         if new_heading_norm < 1e-12:
+#             new_heading = current_heading.copy()
+#         else:
+#             new_heading /= new_heading_norm
+
+#         new_velocity = new_heading * current_speed
+#         new_position = current_position + new_velocity * dt
+
+#         for axis in range(3):
+#             if new_position[axis] < 0.0:
+#                 new_position[axis] = 0.0
+#                 if new_heading[axis] < 0:
+#                     new_heading[axis] *= -1.0
+#             elif new_position[axis] > boxsize:
+#                 new_position[axis] = boxsize
+#                 if new_heading[axis] > 0:
+#                     new_heading[axis] *= -1.0
+
+#         new_heading /= np.linalg.norm(new_heading)
+
+#         new_velocity = new_heading * current_speed
+
+#         position[step] = new_position
+#         velocity[step] = new_velocity
+#         heading_vectors[step] = new_heading
+#         heading_angles[step] = heading_to_angles(new_heading)
+#         speed_history[step] = current_speed
+#         angular_velocity[step] = current_angular_velocity
+
+#         delta_angles = heading_angles[step] - heading_angles[step - 1]
+
+#         delta_angles[0] = ((delta_angles[0] + np.pi) % (2.0 * np.pi)) - np.pi
+
+#         heading_angle_velocity[step] = delta_angles / dt
+
+#         current_position = new_position
+#         current_heading = new_heading
+
+#     return {
+#         "pos": position,
+#         "vel": velocity,
+#         "dir": heading_angles,
+#         "dir_vel": heading_angle_velocity,
+#         "heading": heading_vectors,
+#         "angular_velocity": angular_velocity,
+#         "speed": speed_history,
+#         "time": time,
+#     }
