@@ -1,5 +1,6 @@
 import numpy as np
 from typing import Tuple, Dict,Optional
+import tqdm
 
 
 def generate_random_walk(
@@ -235,23 +236,22 @@ def generate_head_direction_walk(
 def generate_bat_flight(
     T: float,
     dt: float = 0.1e-3,
-    boxsize: float = 3.0,
-    turn_correlation_time: float = 0.05,
-    turning_std: float = 5.0,
-    speed_mean: float = 3.0,
+    boxsize: float = 5.0,
+    turning_std: float = 0.04,
+    speed_mean: float = 1.0,
     speed_std: float = 1.5,
     speed_correlation_time: float = 0.5,
     min_speed: float = 0.3,
-    max_speed: float = 7.0,
-    wall_clearance: float = 0.4,
-    wall_repulsion_strength: float = 3.0,
+    max_speed: float = 3.0,
+    #wall_clearance: float = 2.5,
+    wall_repulsion_strength: float = 0.02,
     initial_position: Optional[np.ndarray] = None,
     initial_heading: Optional[np.ndarray] = None,
     rng: Optional[np.random.Generator] = None,
 ) -> Dict[str, np.ndarray]:
     if rng is None:
         rng = np.random.default_rng()
-
+    wall_clearance = boxsize / 2
     n_steps = int(np.ceil(T / dt))
 
     position = np.zeros((n_steps, 3))
@@ -260,7 +260,6 @@ def generate_bat_flight(
     heading_velocity = np.zeros((n_steps, 2))
     time = np.arange(n_steps) * dt
 
-    # --- initial state ---
     if initial_position is None:
         current_position = np.ones(3) * boxsize / 2
     else:
@@ -274,29 +273,17 @@ def generate_bat_flight(
         current_heading /= np.linalg.norm(current_heading)
 
     current_speed = speed_mean
-    steering = np.zeros(3)  # OU "angular velocity" state driving turns
+    steering = np.zeros(3) 
 
     def wall_repulsion(pos: np.ndarray) -> np.ndarray:
-        """
-        Soft steering push away from any wall within wall_clearance.
-
-        Penetration is squared (not linear) so the push is gentle until
-        the agent is genuinely close to a wall, and it's capped at
-        `wall_repulsion_strength` per axis so it nudges the stochastic
-        steering rather than overpowering it and causing deterministic
-        billiard-ball-style bouncing.
-        """
-        lower_pen = np.clip(wall_clearance - pos, 0, None) / wall_clearance
-        upper_pen = np.clip(wall_clearance - (boxsize - pos), 0, None) / wall_clearance
+        lower_pen = (wall_clearance - pos > 0).astype(float)
+        upper_pen = (wall_clearance - (boxsize - pos) > 0).astype(float)
         return wall_repulsion_strength * (lower_pen**2 - upper_pen**2)
 
     def heading_to_angles(h: np.ndarray) -> np.ndarray:
         return np.array(
             [np.arctan2(h[1], h[0]), np.arccos(np.clip(h[2], -1.0, 1.0))]
         )
-
-    ou_turn_decay = np.exp(-dt / turn_correlation_time)
-    ou_turn_noise_scale = turning_std * np.sqrt(1 - ou_turn_decay**2)
 
     ou_speed_decay = np.exp(-dt / speed_correlation_time)
     ou_speed_noise_scale = speed_std * np.sqrt(1 - ou_speed_decay**2)
@@ -305,20 +292,20 @@ def generate_bat_flight(
     velocity[0] = current_heading * current_speed
     heading[0] = heading_to_angles(current_heading)
 
-    for step in range(1, n_steps):
-        # --- speed: bounded OU process ---
-        speed_noise = ou_speed_noise_scale * rng.normal()
-        current_speed = (
-            speed_mean + (current_speed - speed_mean) * ou_speed_decay + speed_noise
+    for step in tqdm.tqdm(range(1, n_steps)):
+        #speed_noise = ou_speed_noise_scale * np.clip(rng.normal(),0,1)
+        boundary_distance = np.min(
+            np.minimum(current_position, boxsize - current_position)
         )
-        current_speed = np.clip(current_speed, min_speed, max_speed)
+        boundary_factor = np.clip(boundary_distance / wall_clearance, 0.0, 1.0)
+        boundary_speed_mean = max_speed * boundary_factor
+        current_speed = boundary_speed_mean
 
-        # --- steering: OU process on angular velocity + wall repulsion bias ---
-        turn_noise = ou_turn_noise_scale * rng.normal(size=3)
-        steering = steering * ou_turn_decay + turn_noise
+        wall_mask = ~((current_position - wall_clearance < 0) | (current_position + wall_clearance > boxsize))
+        turn_noise = turning_std * np.clip(rng.normal(size=3),-1,1) * wall_mask
+        steering = steering + turn_noise
         steering = steering + wall_repulsion(current_position)
 
-        # keep only the component that rotates heading (tangent to the sphere)
         tangential = steering - np.dot(steering, current_heading) * current_heading
 
         new_heading = current_heading + tangential * dt
@@ -326,7 +313,6 @@ def generate_bat_flight(
 
         velocity[step] = new_heading * current_speed
         current_position = current_position + velocity[step] * dt
-        current_position = np.clip(current_position, 0.0, boxsize)  # safety net
 
         position[step] = current_position
         heading[step] = heading_to_angles(new_heading)
