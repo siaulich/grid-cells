@@ -20,8 +20,8 @@ The oscillatory interference model suggests that grid cell firing patterns arise
 
 Combining oscillators with different directional preferences can lead to the formation of a hexagonal grid pattern, as the interference of these oscillations creates peaks in firing at specific spatial locations.
 
-### Continuous Attractor Network Model [Burak, Yoram & Fiete, Ila R. (2009)](https://dx.plos.org/10.1371/journal.pcbi.1000291)
-The continuous attractor network model proposes that grid cells are part of a network of neurons that maintain a stable representation of space through recurrent connections. In this model, the activity of grid cells is influenced by the activity of neighbouring cells, allowing for the formation of a continuous representation of the environment. This representation can be thought of as a "bump" of activity that moves across the network as the animal navigates through space. 
+### Continuous Attractor Network Model [Burak, Yoram & Fiete, Ila R. (2009)](https://dx.plos.org/10.1371/journal.pcbi.1000291) & [Zhang, Kechen (1996)](https://www.jneurosci.org/content/16/6/2112)
+The continuous attractor network model proposes that grid cells are part of a network of neurons that maintain a stable representation of space through recurrent connections. In this model, the activity of grid cells is influenced by the activity of neighbouring cells, allowing for the formation of a continuous representation of the environment. This representation can be thought of as a "bump" of activity that moves across the network as the animal navigates through space.
 
 ## Example figure
 
