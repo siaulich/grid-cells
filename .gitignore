@@ -1,0 +1,7 @@
+simulation_data/*
+venv/
+**/__pycache__/*
+**/.DS_Store
+**.egg-info/*
+*.npy
+*.gif

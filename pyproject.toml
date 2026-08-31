@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grid_cells"
+version = "0.1.0"
+description = "Implementation of simple grid cell model"
+readme = "README.md"
+dependencies = [
+    "numpy",
+    "matplotlib",
+    "jupyter",
+    "ipython",
+    "black",
+    "tqdm",
+    "black[jupyter]",
+    "nbstripout",
+    "pre-commit"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
