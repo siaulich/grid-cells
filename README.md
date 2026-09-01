@@ -1,11 +1,7 @@
 # Grid Cells
-This repository contains simple Python implementations of the Oscillatory Interference (OI) and Continuous Attractor Network (CAN) models for grid cells. The code is designed to simulate the firing patterns of grid cells in a 2D environment, allowing for exploration of their unique properties and behaviours.
-
+This repository contains simple Python implementations of the Oscillatory Interference (OI) and Continuous Attractor Network (CAN) models for grid cells. 
 
 # Background
-
-## Overview
-Grid cells are a type of neuron found in mammalian brains, particularly in the entorhinal cortex. They bare their name due to their unique firing patterns, which form a hexagonal grid-like representation of the environment.
 
 ## Features
 - **Hexagonal Firing Pattern**: Grid cells fire in a hexagonal pattern, allowing for efficient spatial representation and navigation.
@@ -15,7 +11,7 @@ Grid cells are a type of neuron found in mammalian brains, particularly in the e
 
 ## Models for Grid Cells
 
-### Oscillatory Interference Model [Burgess, N., Barry, C., & O'Keefe, J. (2007).](https://www.ovid.com/10.1002/hipo.20327)
+### Oscillatory Interference Model [Burgess, N., Barry, C., & O'Keefe, J. (2007)](https://www.ovid.com/10.1002/hipo.20327)
 The oscillatory interference model suggests that grid cell firing patterns arise from the interference of multiple oscillatory inputs. These oscillations can be influenced by the animal's movement and speed, leading to the formation of the hexagonal grid pattern. Assuming a linear relation between frequency and velocity, the phase difference is proportional to the distance travelled by the animal, leading to the formation of a grid-like firing pattern.
 
 Combining oscillators with different directional preferences can lead to the formation of a hexagonal grid pattern, as the interference of these oscillations creates peaks in firing at specific spatial locations.

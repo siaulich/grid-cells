@@ -1,12 +1,14 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Union, Tuple, List
+from typing import Optional, Union, Tuple, List
+from scipy.ndimage import gaussian_filter
 
 
 def activity_map(
     position: np.ndarray,
     activity: np.ndarray,
     nbins: Union[Tuple[int, ...], int] = 50,
+    sigma: Optional[float] = None,
 ) -> Tuple[np.ndarray, List[np.ndarray]]:
 
     if position.ndim == 2:
@@ -34,6 +36,8 @@ def activity_map(
         out=np.zeros_like(activity_sum),
         where=counts > 0,
     )
+    if sigma:
+        mean_activity = gaussian_filter(mean_activity, sigma=sigma)
 
     return mean_activity, counts, edges
 

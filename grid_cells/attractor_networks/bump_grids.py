@@ -6,9 +6,7 @@ toroidal lattice.
 
 import numpy as np
 from typing import Tuple, Callable, Dict
-from abc import ABC, abstractmethod
 from tqdm import tqdm
-from ..plot_tools import angular_error
 
 
 class AttractorNetworkBase:
@@ -52,7 +50,7 @@ class AttractorNetworkBase:
 
         self.s = self.rng.uniform(size=(self.n, self.n)) * 0.1
         self.anchor_points = []
-        self.setup_attractor(**kwargs)
+        self._setup_attractor(**kwargs)
 
     def add_anchor_point(
         self,
@@ -96,10 +94,10 @@ class AttractorNetworkBase:
                 * np.abs(vy)
             )
 
-        total_input = self.recurrent_input(self.s, vx, vy) + self.feedforward_input(
+        total_input = self._recurrent_input(self.s, vx, vy) + self._feedforward_input(
             self.s, vx, vy
         )
-        anchor_input = self.compute_anchor_input(pos) if pos is not None else 0.0
+        anchor_input = self._compute_anchor_input(pos) if pos is not None else 0.0
 
         rate_derivatives = -self.s + np.maximum(total_input, 0.0) + anchor_input
 
@@ -110,7 +108,7 @@ class AttractorNetworkBase:
 
         self.s = self.s + (self.dt / self.tau) * rate_derivatives + intrinsic_noise_term
 
-    def compute_anchor_input(self, pos):
+    def _compute_anchor_input(self, pos):
         anchor_input = np.zeros_like(self.s)
         for anchor in self.anchor_points:
             anchor_input += anchor(pos)
@@ -129,15 +127,37 @@ class AttractorNetworkBase:
             step += 1
         print(f"Ran warm up for {step} steps")
 
-    def add_variables(self, output_dict, n_steps):
+    def _add_variables(self, output_dict, n_steps):
         pass
 
-    def record_variables(self, output_dict, step_iter):
+    def _record_variables(self, output_dict, step_iter):
         pass
 
     def run_simulation(
         self, v: np.ndarray, pos=None, rec_cells=None, n_snapshots=1000
     ) -> Dict[str, np.ndarray]:
+        """Run the network simulation with given velocity input.
+        
+        Parameters
+        ----------
+        v : np.ndarray
+            Velocity input array of shape (n_steps, 2) with vx and vy components.
+        pos : np.ndarray, optional
+            Position array of shape (n_steps, 2). If provided, passed to step().
+        rec_cells : list, optional
+            List of cell indices to record. Defaults to 9 random cells if None.
+        n_snapshots : int, optional
+            Number of population snapshots to record (default: 1000).
+        
+        Returns
+        -------
+        Dict[str, np.ndarray]
+            Dictionary containing:
+            - 'cell_recording': recorded activity of selected cells
+            - 'cell_indices': indices of recorded cells
+            - 'popuplation_snapshots': snapshots of full network state
+            - 'snapshot_indices': time indices of snapshots
+        """
         rec_cells = rec_cells or list(np.random.randint(0, self.n - 1, size=(9, 2)))
         if np.any(np.array(rec_cells) >= self.n) or np.any(np.array(rec_cells) < 0):
             raise ValueError(f"Indices of recorded cells must be in {0}...{self.n}")
@@ -153,7 +173,7 @@ class AttractorNetworkBase:
         output_dict["snapshot_indices"] = np.linspace(
             0, n_steps - 1, n_snapshots, dtype=int
         )
-        self.add_variables(output_dict, n_steps)
+        self._add_variables(output_dict, n_steps)
         snapshot_iter = 0
 
         for step_iter in tqdm(range(n_steps), desc="Running Simulation Steps"):
@@ -168,16 +188,53 @@ class AttractorNetworkBase:
             if step_iter == output_dict["snapshot_indices"][snapshot_iter]:
                 output_dict["popuplation_snapshots"][snapshot_iter] = self.s
                 snapshot_iter += 1
-            self.record_variables(output_dict, step_iter)
+            self._record_variables(output_dict, step_iter)
         return output_dict
 
-    def recurrent_input(self, s, vx, vy):
+    def _recurrent_input(self, s, vx, vy):
+        """Compute recurrent input from network state and velocity.
+        
+        Parameters
+        ----------
+        s : np.ndarray
+            Network state (activity).
+        vx : float
+            X-component of velocity.
+        vy : float
+            Y-component of velocity.
+
+        Returns
+        -------
+        np.ndarray
+            Recurrent input to the network.
+        """
         raise NotImplementedError("Has to be implemented by subclasses")
 
-    def feedforward_input(self, s, vx, vy):
+    def _feedforward_input(self, s, vx, vy):
+        """Compute feedforward input from velocity.
+        
+        Parameters
+        ----------
+        s : np.ndarray
+            Network state (activity).
+        vx : float
+            X-component of velocity.
+        vy : float
+            Y-component of velocity.
+        
+        Returns
+        -------
+        np.ndarray
+            Feedforward input to the network.
+        """
         raise NotImplementedError("Has to be implemented by subclasses")
 
-    def setup_attractor(self, **kwargs):
+    def _setup_attractor(self, **kwargs):
+        """Set up attractor-specific parameters.
+        
+        This method should be overridden by subclasses to initialize
+        any additional attractor-specific parameters or kernels.
+        """
         print("WARNING: No additional setup for attractor was implemented")
         pass
 
@@ -191,7 +248,7 @@ class ToroidBurakFiete2009(AttractorNetworkBase):
     To establish the grid pattern, a warm up with :meth:`warmup` is recommended.
     """
 
-    def setup_attractor(self, **kwargs):
+    def _setup_attractor(self, **kwargs):
         self.l_shift = 2.0
         self.alpha = 0.10315
 
@@ -210,7 +267,7 @@ class ToroidBurakFiete2009(AttractorNetworkBase):
 
         for preferred_direction in self.dir_vectors:
             self.directed_kernels[preferred_direction] = np.fft.fft2(
-                self.periodic_kernel(
+                self._periodic_kernel(
                     self.n,
                     e_theta=self.dir_vectors[preferred_direction],
                 )
@@ -219,7 +276,7 @@ class ToroidBurakFiete2009(AttractorNetworkBase):
         self.e_theta_x = np.vectorize(lambda d: self.dir_vectors[d][0])(theta_dir)
         self.e_theta_y = np.vectorize(lambda d: self.dir_vectors[d][1])(theta_dir)
 
-    def periodic_kernel(self, n, e_theta=(0.0, 0.0)):
+    def _periodic_kernel(self, n, e_theta=(0.0, 0.0)):
         """Return a periodic kernel shifted in direction ``e_theta``."""
         idx = np.arange(n)
         d = idx - n // 2
@@ -235,7 +292,7 @@ class ToroidBurakFiete2009(AttractorNetworkBase):
         K = np.fft.ifftshift(K)
         return K
 
-    def recurrent_input(self, s, vx, vy):
+    def _recurrent_input(self, s, vx, vy):
         """Calculate recurrent input for activity array ``s``."""
         rec_input = np.zeros_like(s)
         for dir in self.dir_vectors:
@@ -247,7 +304,7 @@ class ToroidBurakFiete2009(AttractorNetworkBase):
             )
         return rec_input
 
-    def feedforward_input(self, s, vx, vy):
+    def _feedforward_input(self, s, vx, vy):
         """Calculate velocity-dependent input for velocity ``(vx, vy)``."""
         return self.B0 * (
             1.0 + self.alpha * (self.e_theta_x * vx + self.e_theta_y * vy)
@@ -262,7 +319,7 @@ class ToroidZhang1996(AttractorNetworkBase):
     To establish the grid pattern, a warm up with :meth:`warmup` is recommended.
     """
 
-    def setup_attractor(self, revolutions=1):
+    def _setup_attractor(self, revolutions=1):
         self.speed_modulation = self._compute_speed_modulation(revolutions)
         self.B0 = 1.0
 
@@ -320,7 +377,7 @@ class ToroidZhang1996(AttractorNetworkBase):
         K_asym_y = np.fft.ifftshift(K_asym_y)
         return K_sym, K_asym_x, K_asym_y
 
-    def recurrent_input(self, s, vx, vy):
+    def _recurrent_input(self, s, vx, vy):
         """Calculate recurrent input for state ``s`` and velocity ``(vx, vy)``."""
         s_fft = np.fft.fft2(s)
         rec = np.real(np.fft.ifft2(s_fft * self.K_sym_fft))
@@ -330,17 +387,17 @@ class ToroidZhang1996(AttractorNetworkBase):
             rec += vy * np.real(np.fft.ifft2(s_fft * self.K_asym_y_fft))
         return rec
 
-    def feedforward_input(self, s, vx, vy):
+    def _feedforward_input(self, s, vx, vy):
         return self.B0
 
 
 class HeadDirection(ToroidZhang1996):
 
-    def add_variables(self, output_dict, n_steps):
+    def _add_variables(self, output_dict, n_steps):
         output_dict["decoded_angle"] = np.zeros((n_steps, 2))
         output_dict["anchor_input"] = np.zeros(n_steps)
 
-    def record_variables(self, output_dict, step_iter):
+    def _record_variables(self, output_dict, step_iter):
         output_dict["decoded_angle"][step_iter] = self.decode_orientation()
 
     def decode_orientation(self):
