@@ -7,10 +7,23 @@ from scipy.ndimage import gaussian_filter
 def activity_map(
     position: np.ndarray,
     activity: np.ndarray,
-    nbins: Union[Tuple[int, ...], int] = 50,
+    nbins: Union[Tuple[int], int] = 50,
     sigma: Optional[float] = None,
 ) -> Tuple[np.ndarray, List[np.ndarray]]:
-
+    """
+    Compute mean activity map binned by position.
+    
+    Args:
+        position: Position data, shape (n_samples,) or (n_samples, n_dims).
+        activity: Activity data, shape (n_samples,).
+        nbins: Number of bins per dimension. Default is 50.
+        sigma: Gaussian smoothing sigma. If None, no smoothing applied.
+    
+    Returns:
+        mean_activity: Mean activity in each bin.
+        counts: Number of samples in each bin.
+        edges: Bin edges for each dimension.
+    """
     if position.ndim == 2:
         ndim = position.shape[1]
     elif position.ndim == 1:
@@ -43,6 +56,18 @@ def activity_map(
 
 
 def get_plot_grid(n_plots, figsize=(4, 4), **kwargs):
+    """
+    Create a grid of subplots for plotting.
+    
+    Args:
+        n_plots: Number of subplots to create.
+        figsize: Base figure size for each subplot. Default is (4, 4).
+        **kwargs: Additional keyword arguments passed to plt.subplots.
+    
+    Returns:
+        fig: The matplotlib figure object.
+        axes: Array of matplotlib axes objects reshaped to (n_rows, n_cols).
+    """
     if n_plots <= 0:
         raise ValueError("n_plots must be a positive integer")
 

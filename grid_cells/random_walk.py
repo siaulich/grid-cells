@@ -14,12 +14,28 @@ def generate_random_walk(
     rng=None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Generates a systematic, space-filling random walk in a box [0, boxsize]^ndim.
-
-    The trajectory visits the box on a regular grid using a snake ordering so that
-    the walk covers the full domain in an organized way rather than wandering in a
-    purely diffusive fashion. The returned arrays keep the same interface as the
-    original implementation: position, velocity, time.
+    Generate a random walk trajectory in an n-dimensional box with reflective boundaries.
+    
+    The walk updates heading direction and speed at specified intervals, with velocity
+    vectors reflected at box boundaries.
+    
+    Args:
+        T: Total duration of the walk in seconds.
+        dt: Time step in seconds. Default: 0.5e-3.
+        boxsize: Size of the box in each dimension. Default: 1.0.
+        heading_update_inverall: Time interval for updating heading direction in seconds. Default: 2e-2.
+        speed_update_intervall: Time interval for updating speed in seconds. Default: 0.5e-1.
+        ndim: Number of spatial dimensions. Default: 2.
+        max_speed: Maximum speed magnitude. If None, defaults to boxsize/2.
+        rng: Random number generator. If None, uses np.random.default_rng(42).
+    
+    Returns
+    -------
+    Dict[str, np.ndarray]
+        Dictionary containing simulation outputs with keys:
+        - 'pos': (n_steps, ndim) position trajectory
+        - 'vel': (n_steps, ndim) velocity trajectory
+        - 'time': (n_steps,) time array
     """
     rng = rng or np.random.default_rng(42)
 
@@ -39,7 +55,6 @@ def generate_random_walk(
     current_time = 0
     current_speed = rng.uniform(max_speed / 2, max_speed)
 
-    # Random unit vector in ndim dimensions (generalizes the 2D angle)
     current_heading = rng.normal(size=ndim)
     current_heading /= np.linalg.norm(current_heading)
 
@@ -73,10 +88,23 @@ def generate_random_walk(
         position[step_iter] = current_position
         velocity[step_iter] = current_velocity
 
-    return position, velocity, time
+    return {
+        "pos": position,
+        "vel": velocity,
+        "time": time,
+    }
 
 
 def compute_spherical_coordinates(heading):
+    """
+    Convert 3D Cartesian heading vector to spherical coordinates (azimuth, pitch).
+    
+    Args:
+        heading: 3D heading vector or array of heading vectors.
+        
+    Returns:
+        Array of (azimuth, pitch) angles in radians.
+    """
     heading = np.asarray(heading, dtype=float)
     heading_norm = np.linalg.norm(heading, axis=-1, keepdims=True)
     heading = heading / np.clip(heading_norm, 1e-12, None)
@@ -103,6 +131,52 @@ def generate_bat_flight(
     initial_speed=None,
     initial_heading=None,
 ) -> Dict[str, np.ndarray]:
+    """
+    Generate a bat flight trajectory in a 3D box with realistic dynamics.
+    
+    Parameters
+    ----------
+    T : float
+        Total simulation time in seconds.
+    dt : float, optional
+        Time step for integration. Default is 0.1 ms.
+    boxsize : float, optional
+        Size of the cubic domain [0, boxsize]^3. Default is 5.0.
+    turning_std : float, optional
+        Standard deviation of turning angles in degrees. Default is 0.5.
+    speed_mean : float, optional
+        Mean speed in m/s. Default is 2.5.
+    speed_std : float, optional
+        Standard deviation of speed. Default is 1.5.
+    speed_correlation_time : float, optional
+        Correlation time for speed fluctuations in seconds. Default is 0.5.
+    min_speed : float, optional
+        Minimum speed in m/s. Default is 1.2.
+    max_speed : float, optional
+        Maximum speed in m/s. Default is 5.0.
+    wall_repulsion_strength : float, optional
+        Strength of wall repulsion force. Default is 5.
+    rng : np.random.Generator, optional
+        Random number generator. If None, uses default with seed 42.
+    initial_position : array-like, optional
+        Initial position [x, y, z]. If None, starts at box center.
+    initial_speed : float, optional
+        Initial speed. If None, uses speed_mean.
+    initial_heading : array-like, optional
+        Initial heading vector [hx, hy, hz]. If None, random unit vector.
+    
+    Returns
+    -------
+    Dict[str, np.ndarray]
+        Dictionary containing simulation outputs with keys:
+        - 'pos': (n_steps, 3) position trajectory
+        - 'vel': (n_steps, 3) velocity trajectory
+        - 'dir_torus': (n_steps, 2) heading in toroid coordinates
+        - 'dir_sphere': (n_steps, 2) heading in spherical coordinates
+        - 'dir_vel': (n_steps, 2) heading velocity
+        - 'time': (n_steps,) time array
+    """
+    
     rng = rng or np.random.default_rng(42)
 
     turn_clearance = boxsize / 8
@@ -280,6 +354,38 @@ def generate_2d_bat_flight(
     wall_repulsion_strength: float = 5,
     rng: Optional[np.random.Generator] = None,
 ) -> Dict[str, np.ndarray]:
+    """
+    Simulate 2D bat flight in a bounded cubic box with realistic movement dynamics.
+    
+    The trajectory is constrained to a 2D horizontal plane (z = boxsize/2) with 
+    Ornstein-Uhlenbeck processes for speed and steering. Wall repulsion and speed 
+    modulation near boundaries provide realistic boundary avoidance.
+    
+    Args:
+        T: Total simulation time in seconds.
+        dt: Time step in seconds.
+        boxsize: Size of cubic domain [0, boxsize]^3.
+        turning_std: Standard deviation for steering noise (rad/s).
+        speed_mean: Mean speed (m/s).
+        speed_std: Standard deviation of speed (m/s).
+        speed_correlation_time: Correlation time for speed OU process (s).
+        min_speed: Minimum speed constraint (m/s).
+        max_speed: Maximum speed constraint (m/s).
+        wall_repulsion_strength: Strength of repulsive force from walls.
+        rng: Random number generator. Defaults to np.random.default_rng(42).
+        
+    Returns
+    -------
+    Dict[str, np.ndarray]
+        Dictionary containing simulation outputs with keys:
+        - 'pos': (n_steps, 3) position trajectory
+        - 'vel': (n_steps, 3) velocity trajectory
+        - 'dir_torus': (n_steps, 2) heading in toroid coordinates
+        - 'dir_sphere': (n_steps, 2) heading in spherical coordinates
+        - 'dir_vel': (n_steps, 2) heading velocity
+        - 'time': (n_steps,) time array
+    """
+
     rng = rng or np.random.default_rng(42)
 
     turn_clearance = boxsize / 8
