@@ -5,7 +5,7 @@ toroidal lattice.
 """
 
 import numpy as np
-from typing import Tuple, Callable, Dict
+from typing import Union, Tuple, Callable, Dict
 from tqdm import tqdm
 
 
@@ -319,7 +319,7 @@ class ToroidZhang1996(AttractorNetworkBase):
     To establish the grid pattern, a warm up with :meth:`warmup` is recommended.
     """
 
-    def _setup_attractor(self, revolutions=1):
+    def _setup_attractor(self, revolutions : Union[Tuple,float]):
         self.speed_modulation = self._compute_speed_modulation(revolutions)
         self.B0 = 1.0
 
@@ -337,8 +337,15 @@ class ToroidZhang1996(AttractorNetworkBase):
         dx, dy = np.meshgrid(d, d, indexing="ij")
         return dx, dy
 
-    def _compute_speed_modulation(self, revolutions=1):
+    def _compute_speed_modulation(self, revolutions = 1):
         """Compute the asymmetric-kernel scale for ``revolutions`` per cycle."""
+        if isinstance(revolutions,(float, int)):
+            revolutions = np.ones((2,),dtype=float) * revolutions
+        elif isinstance(revolutions, tuple):
+            revolutions = np.array(revolutions)
+        else:
+            raise ValueError("WTF?")
+
         target_gain = self.n / (2 * np.pi) * revolutions
         idx = np.arange(self.n)
         d = idx - self.n // 2
@@ -353,7 +360,7 @@ class ToroidZhang1996(AttractorNetworkBase):
 
         norm = np.max(np.abs(K_sym))
         dnorm = np.max(np.abs(dK_dx))
-        return target_gain * self.tau * dnorm / norm
+        return  target_gain * self.tau * dnorm / norm
 
     def _build_kernels(self, n):
         """Construct centered symmetric and velocity-dependent kernels."""
@@ -369,8 +376,8 @@ class ToroidZhang1996(AttractorNetworkBase):
 
         norm = np.max(np.abs(K_sym))
         dnorm = max(np.max(np.abs(dK_dx)), np.max(np.abs(dK_dy)), 1e-12)
-        K_asym_x = self.speed_modulation * dK_dx * (norm / dnorm)
-        K_asym_y = self.speed_modulation * dK_dy * (norm / dnorm)
+        K_asym_x = self.speed_modulation[0] * dK_dx * (norm / dnorm)
+        K_asym_y = self.speed_modulation[1] * dK_dy * (norm / dnorm)
 
         K_sym = np.fft.ifftshift(K_sym)
         K_asym_x = np.fft.ifftshift(K_asym_x)
