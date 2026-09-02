@@ -15,10 +15,10 @@ def generate_random_walk(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Generate a random walk trajectory in an n-dimensional box with reflective boundaries.
-    
+
     The walk updates heading direction and speed at specified intervals, with velocity
     vectors reflected at box boundaries.
-    
+
     Args:
         T: Total duration of the walk in seconds.
         dt: Time step in seconds. Default: 0.5e-3.
@@ -28,7 +28,7 @@ def generate_random_walk(
         ndim: Number of spatial dimensions. Default: 2.
         max_speed: Maximum speed magnitude. If None, defaults to boxsize/2.
         rng: Random number generator. If None, uses np.random.default_rng(42).
-    
+
     Returns
     -------
     Dict[str, np.ndarray]
@@ -98,10 +98,10 @@ def generate_random_walk(
 def compute_spherical_coordinates(heading):
     """
     Convert 3D Cartesian heading vector to spherical coordinates (azimuth, pitch).
-    
+
     Args:
         heading: 3D heading vector or array of heading vectors.
-        
+
     Returns:
         Array of (azimuth, pitch) angles in radians.
     """
@@ -133,7 +133,7 @@ def generate_bat_flight(
 ) -> Dict[str, np.ndarray]:
     """
     Generate a bat flight trajectory in a 3D box with realistic dynamics.
-    
+
     Parameters
     ----------
     T : float
@@ -164,7 +164,7 @@ def generate_bat_flight(
         Initial speed. If None, uses speed_mean.
     initial_heading : array-like, optional
         Initial heading vector [hx, hy, hz]. If None, random unit vector.
-    
+
     Returns
     -------
     Dict[str, np.ndarray]
@@ -176,7 +176,7 @@ def generate_bat_flight(
         - 'dir_vel': (n_steps, 2) heading velocity
         - 'time': (n_steps,) time array
     """
-    
+
     rng = rng or np.random.default_rng(42)
 
     turn_clearance = boxsize / 8
@@ -356,11 +356,11 @@ def generate_2d_bat_flight(
 ) -> Dict[str, np.ndarray]:
     """
     Simulate 2D bat flight in a bounded cubic box with realistic movement dynamics.
-    
-    The trajectory is constrained to a 2D horizontal plane (z = boxsize/2) with 
-    Ornstein-Uhlenbeck processes for speed and steering. Wall repulsion and speed 
+
+    The trajectory is constrained to a 2D horizontal plane (z = boxsize/2) with
+    Ornstein-Uhlenbeck processes for speed and steering. Wall repulsion and speed
     modulation near boundaries provide realistic boundary avoidance.
-    
+
     Args:
         T: Total simulation time in seconds.
         dt: Time step in seconds.
@@ -373,7 +373,7 @@ def generate_2d_bat_flight(
         max_speed: Maximum speed constraint (m/s).
         wall_repulsion_strength: Strength of repulsive force from walls.
         rng: Random number generator. Defaults to np.random.default_rng(42).
-        
+
     Returns
     -------
     Dict[str, np.ndarray]

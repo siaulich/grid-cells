@@ -1,11 +1,13 @@
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+requires-python = ">= 3.0"
 
 [project]
-name = "grid_cells"
+name = "grid-cells"
+authors = [{name = "Siemen Aulich"}]
 version = "0.1.0"
-description = "Implementation of simple grid cell model"
+description = "Implementation of simple grid cell models"
 readme = "README.md"
 dependencies = [
     "numpy",

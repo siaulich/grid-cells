@@ -137,7 +137,7 @@ class AttractorNetworkBase:
         self, v: np.ndarray, pos=None, rec_cells=None, n_snapshots=1000
     ) -> Dict[str, np.ndarray]:
         """Run the network simulation with given velocity input.
-        
+
         Parameters
         ----------
         v : np.ndarray
@@ -148,7 +148,7 @@ class AttractorNetworkBase:
             List of cell indices to record. Defaults to 9 random cells if None.
         n_snapshots : int, optional
             Number of population snapshots to record (default: 1000).
-        
+
         Returns
         -------
         Dict[str, np.ndarray]
@@ -193,7 +193,7 @@ class AttractorNetworkBase:
 
     def _recurrent_input(self, s, vx, vy):
         """Compute recurrent input from network state and velocity.
-        
+
         Parameters
         ----------
         s : np.ndarray
@@ -212,7 +212,7 @@ class AttractorNetworkBase:
 
     def _feedforward_input(self, s, vx, vy):
         """Compute feedforward input from velocity.
-        
+
         Parameters
         ----------
         s : np.ndarray
@@ -221,7 +221,7 @@ class AttractorNetworkBase:
             X-component of velocity.
         vy : float
             Y-component of velocity.
-        
+
         Returns
         -------
         np.ndarray
@@ -231,7 +231,7 @@ class AttractorNetworkBase:
 
     def _setup_attractor(self, **kwargs):
         """Set up attractor-specific parameters.
-        
+
         This method should be overridden by subclasses to initialize
         any additional attractor-specific parameters or kernels.
         """
