@@ -319,7 +319,7 @@ class ToroidZhang1996(AttractorNetworkBase):
     To establish the grid pattern, a warm up with :meth:`warmup` is recommended.
     """
 
-    def _setup_attractor(self, revolutions : Union[Tuple,float]):
+    def _setup_attractor(self, revolutions: Union[Tuple, float]):
         self.speed_modulation = self._compute_speed_modulation(revolutions)
         self.B0 = 1.0
 
@@ -337,10 +337,10 @@ class ToroidZhang1996(AttractorNetworkBase):
         dx, dy = np.meshgrid(d, d, indexing="ij")
         return dx, dy
 
-    def _compute_speed_modulation(self, revolutions = 1):
+    def _compute_speed_modulation(self, revolutions=1):
         """Compute the asymmetric-kernel scale for ``revolutions`` per cycle."""
-        if isinstance(revolutions,(float, int)):
-            revolutions = np.ones((2,),dtype=float) * revolutions
+        if isinstance(revolutions, (float, int)):
+            revolutions = np.ones((2,), dtype=float) * revolutions
         elif isinstance(revolutions, tuple):
             revolutions = np.array(revolutions)
         else:
@@ -360,7 +360,7 @@ class ToroidZhang1996(AttractorNetworkBase):
 
         norm = np.max(np.abs(K_sym))
         dnorm = np.max(np.abs(dK_dx))
-        return  target_gain * self.tau * dnorm / norm
+        return target_gain * self.tau * dnorm / norm
 
     def _build_kernels(self, n):
         """Construct centered symmetric and velocity-dependent kernels."""

@@ -7,7 +7,7 @@ from scipy.ndimage import gaussian_filter
 def activity_map(
     position: np.ndarray,
     activity: np.ndarray,
-    nbins: Union[Tuple[int], int] = 50,
+    nbins: Union[Tuple[int], int] = 25,
     sigma: Optional[float] = None,
 ) -> Tuple[np.ndarray, List[np.ndarray]]:
     """
@@ -16,7 +16,7 @@ def activity_map(
     Args:
         position: Position data, shape (n_samples,) or (n_samples, n_dims).
         activity: Activity data, shape (n_samples,).
-        nbins: Number of bins per dimension. Default is 50.
+        nbins: Number of bins per dimension. Default is 25.
         sigma: Gaussian smoothing sigma. If None, no smoothing applied.
 
     Returns:
