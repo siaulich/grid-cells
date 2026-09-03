@@ -110,7 +110,7 @@ def compute_spherical_coordinates(heading):
     heading = heading / np.clip(heading_norm, 1e-12, None)
 
     azimuth = np.arctan2(heading[..., 1], heading[..., 0])
-    pitch = np.arcsin(np.clip(heading[..., 2], -1.0, 1.0))
+    pitch = np.arcsin(np.clip(heading[..., 2], -1.0, 1.0)) + np.pi / 2
 
     return np.stack((azimuth, pitch), axis=-1)
 
@@ -190,12 +190,13 @@ def generate_bat_flight(
     sphere_heading = np.zeros((n_steps, 2))
     heading_velocity = np.zeros((n_steps, 2))
     time = np.arange(n_steps) * dt
+    invertedness = np.zeros((n_steps))
 
     # Initialize state
     if initial_position is None:
         current_position = np.ones(3) * boxsize / 2
     else:
-        initial_position = np.array(initial_position).flatten()
+        initial_position = np.array(initial_position,dtype=float).flatten()
         if initial_position.shape == (3,):
             current_position = initial_position
         else:
@@ -206,7 +207,7 @@ def generate_bat_flight(
         current_heading = rng.normal(size=3)
         current_heading /= np.linalg.norm(current_heading)
     else:
-        initial_heading = np.array(initial_heading).flatten()
+        initial_heading = np.array(initial_heading,dtype=float).flatten()
         if initial_heading.shape == (3,):
             initial_heading /= np.linalg.norm(initial_heading)
             current_heading = initial_heading
@@ -240,8 +241,7 @@ def generate_bat_flight(
 
         return wall_repulsion_strength * (force_lower - force_upper)
 
-    current_azimuth = 0
-    current_pitch = 0
+    current_azimuth, current_pitch = compute_spherical_coordinates(current_heading)
 
     # Steering is now natively [d_azimuth, d_pitch]
     steering_angles = np.zeros(2)
@@ -259,9 +259,9 @@ def generate_bat_flight(
     max_angular_vel = 20.0  # rad/s
 
     for step in tqdm.tqdm(range(1, n_steps)):
-        h_x = np.cos(current_pitch) * np.cos(current_azimuth)
-        h_y = np.cos(current_pitch) * np.sin(current_azimuth)
-        h_z = np.sin(current_pitch)
+        h_x = np.cos(current_pitch - np.pi / 2) * np.cos(current_azimuth)
+        h_y = np.cos(current_pitch - np.pi / 2) * np.sin(current_azimuth)
+        h_z = np.sin(current_pitch - np.pi / 2)
         current_heading = np.array([h_x, h_y, h_z])
 
         facing_mask = (
@@ -272,9 +272,9 @@ def generate_bat_flight(
         u_azimuth = np.array([-np.sin(current_azimuth), np.cos(current_azimuth), 0.0])
         u_pitch = np.array(
             [
-                -np.cos(current_azimuth) * np.sin(current_pitch),
-                -np.sin(current_azimuth) * np.sin(current_pitch),
-                np.cos(current_pitch),
+                -np.cos(current_azimuth) * np.sin(current_pitch - np.pi / 2),
+                -np.sin(current_azimuth) * np.sin(current_pitch - np.pi / 2),
+                np.cos(current_pitch - np.pi / 2),
             ]
         )
 
@@ -293,7 +293,7 @@ def generate_bat_flight(
         if steering_norm > max_angular_vel:
             total_steering = total_steering * (max_angular_vel / steering_norm)
 
-        current_azimuth = (current_azimuth + total_steering[0] * dt) % (2 * np.pi)
+        current_azimuth = (current_azimuth + total_steering[0] * dt ) % (2 * np.pi)
         current_pitch = (current_pitch + total_steering[1] * dt) % (2 * np.pi)
 
         slow_mask = (
@@ -325,12 +325,14 @@ def generate_bat_flight(
         toroid_heading[step] = [current_azimuth, current_pitch]
         heading_velocity[step] = total_steering
         sphere_heading[step] = compute_spherical_coordinates(current_heading)
+        invertedness[step] = np.abs(current_pitch) > np.pi
 
     return {
         "pos": position,
         "vel": velocity,
         "dir_torus": toroid_heading,
         "dir_sphere": sphere_heading,
+        "inverted": invertedness.astype(bool),
         "dir_vel": heading_velocity,
         "time": time,
     }

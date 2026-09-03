@@ -319,7 +319,57 @@ class ToroidZhang1996(AttractorNetworkBase):
     To establish the grid pattern, a warm up with :meth:`warmup` is recommended.
     """
 
-    def _setup_attractor(self, revolutions: Union[Tuple, float]):
+    def __init__(
+        self,
+        n=64,
+        tau=10e-3,
+        dt=0.5e-3,
+        intrinsic_noise=0,
+        input_noise=0,
+        size = 1,
+        use_single_bump=False,
+        rng=None,
+        **kwargs,
+    ):
+        self.n = n
+        self.tau = tau
+        self.dt = dt
+        self.rng = rng or np.random.default_rng(42)
+        self.intrinsic_noise = intrinsic_noise
+        self.input_noise = input_noise
+
+        if isinstance(size, (float,int)):
+            size = (size,size)
+            size = np.array(size)
+        elif isinstance(size, (tuple,list)):
+            size = np.array(size)
+        else:
+            raise ValueError("WTF?")
+
+        if not use_single_bump:
+            beta = 0.01 * size 
+            gamma = 1.05 * beta
+            a_weight = 1
+            a_weight = 1
+            self.kernel_func = lambda dx2, dy2: a_weight * np.exp(-np.dot(np.stack([dx2,dy2],axis=-1),gamma)) - np.exp(
+                -np.dot(np.stack([dx2,dy2],axis=-1),beta)
+            )
+            self.kernel_deriv_func = lambda dx2, dy2: a_weight * gamma[np.newaxis,np.newaxis,:] * np.exp(
+                -np.dot(np.stack([dx2,dy2],axis=-1),gamma)[...,np.newaxis]
+            ) - beta[np.newaxis,np.newaxis,:] * np.exp(-np.dot(np.stack([dx2,dy2],axis=-1),beta))[...,np.newaxis]
+
+        else:
+            gamma = 0.01 * size / n
+            a_weight = 1
+            inhibition = 1
+            self.kernel_func = lambda dx2, dy2: a_weight * np.exp(-np.dot(np.stack([dx2,dy2],axis=-1),gamma)) - inhibition
+            self.kernel_deriv_func = lambda dx2, dy2: a_weight * gamma[np.newaxis,np.newaxis,:] * np.exp(-np.dot(np.stack([dx2,dy2],axis=-1),gamma))[...,np.newaxis]
+
+        self.s = self.rng.uniform(size=(self.n, self.n)) * 0.1
+        self.anchor_points = []
+        self._setup_attractor(**kwargs)
+
+    def _setup_attractor(self, revolutions: Union[Tuple, float] = 1):
         self.speed_modulation = self._compute_speed_modulation(revolutions)
         self.B0 = 1.0
 
@@ -352,32 +402,32 @@ class ToroidZhang1996(AttractorNetworkBase):
         d = np.where(d > self.n / 2, d - self.n, d)
         d = np.where(d < -self.n / 2, d + self.n, d)
         dxg, dyg = np.meshgrid(d, d, indexing="ij")
-        r2 = dxg**2 + dyg**2
 
-        K_sym = self.kernel_func(r2)
-        common = self.kernel_deriv_func(r2)
-        dK_dx = -2 * dxg * common  # / np.sqrt(r2 + 1e-6)
+        K_sym = self.kernel_func(dxg**2,dyg**2)
+        common = self.kernel_deriv_func(dxg**2,dyg**2)
+        dK_dx = -2 * dxg * common[...,0]  # / np.sqrt(r2 + 1e-6)
+        dK_dy = -2 * dyg * common[...,1]  # / np.sqrt(r2 + 1e-6)
 
         norm = np.max(np.abs(K_sym))
-        dnorm = np.max(np.abs(dK_dx))
+        dnorm = np.array([np.max(np.abs(dK_dx)),np.max(np.abs(dK_dy))])
         return target_gain * self.tau * dnorm / norm
 
     def _build_kernels(self, n):
         """Construct centered symmetric and velocity-dependent kernels."""
         dx, dy = self._distance_grid(n)
-        r2 = dx**2 + dy**2
 
-        K_sym = self.kernel_func(r2)
+        K_sym = self.kernel_func(dx**2,dy**2)
 
-        common = self.kernel_deriv_func(r2)
+        common = self.kernel_deriv_func(dx**2,dy**2)
 
-        dK_dx = -2 * dx * common  # / np.sqrt(r2 + 1e-6)
-        dK_dy = -2 * dy * common  # / np.sqrt(r2 + 1e-6)
+        dK_dx = -2 * dx * common[...,0]  # / np.sqrt(r2 + 1e-6)
+        dK_dy = -2 * dy * common[...,1]  # / np.sqrt(r2 + 1e-6)
 
         norm = np.max(np.abs(K_sym))
-        dnorm = max(np.max(np.abs(dK_dx)), np.max(np.abs(dK_dy)), 1e-12)
-        K_asym_x = self.speed_modulation[0] * dK_dx * (norm / dnorm)
-        K_asym_y = self.speed_modulation[1] * dK_dy * (norm / dnorm)
+        dnorm_x = max(np.max(np.abs(dK_dx)), 1e-12)
+        dnorm_y = max( np.max(np.abs(dK_dy)),1e-12)
+        K_asym_x = self.speed_modulation[0] * dK_dx * (norm / dnorm_x)
+        K_asym_y = self.speed_modulation[1] * dK_dy * (norm / dnorm_y)
 
         K_sym = np.fft.ifftshift(K_sym)
         K_asym_x = np.fft.ifftshift(K_asym_x)
