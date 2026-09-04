@@ -22,7 +22,10 @@ class AttractorNetworkBase:
         rng=None,
         **kwargs,
     ):
-        self.n = n
+        self.shape = (int(n),) if np.isscalar(n) else tuple(map(int, n))
+        if not self.shape or any(size < 1 for size in self.shape):
+            raise ValueError("n must be a positive integer or a sequence of integers")
+        self.ndim = len(self.shape)
         self.tau = tau
         self.dt = dt
         self.rng = rng or np.random.default_rng(42)
@@ -48,7 +51,7 @@ class AttractorNetworkBase:
             self.kernel_func = lambda r2: a_weight * np.exp(-gamma * r2) - inhibition
             self.kernel_deriv_func = lambda r2: a_weight * gamma * np.exp(-gamma * r2)
 
-        self.s = self.rng.uniform(size=(self.n, self.n)) * 0.1
+        self.s = self.rng.uniform(size=self.shape) * 0.1
         self.anchor_points = []
         self._setup_attractor(**kwargs)
 
@@ -61,18 +64,17 @@ class AttractorNetworkBase:
         cell_index=(0, 0),
         strength=0.1,
     ):
-        if len(cell_index) != 2:
-            raise ValueError("cell_index has to be an (i,j) index pair")
-        i, j = cell_index
-        if not (0 <= i < self.n) or not (0 <= j < self.n):
+        if len(cell_index) != self.ndim:
+            raise ValueError(f"cell_index must contain {self.ndim} indices")
+        if any(not (0 <= i < size) for i, size in zip(cell_index, self.shape)):
             raise ValueError("indices must be smaller than network size per dimension")
         if mask is None:
             mask = np.zeros_like(self.s)
-            mask[i, j] = 1
+            mask[tuple(cell_index)] = 1
 
         self.anchor_points.append(lambda pos: strength * weight_func(pos) * mask)
 
-    def step(self, vx=0, vy=0, pos=None, intrinsic_noise=None, input_noise=None):
+    def step(self, v=0, pos=None, intrinsic_noise=None, input_noise=None):
         """Advance the activity state by one Euler integration step."""
 
         eff_input_noise = input_noise if input_noise is not None else self.input_noise
@@ -80,22 +82,18 @@ class AttractorNetworkBase:
             intrinsic_noise if intrinsic_noise is not None else self.intrinsic_noise
         )
 
+        v = np.asarray(v)
+
         if eff_input_noise:
-            vx += (
+            v += (
                 eff_input_noise
                 * np.sqrt(self.dt / self.tau)
-                * self.rng.normal()
-                * np.abs(vx)
-            )
-            vy += (
-                eff_input_noise
-                * np.sqrt(self.dt / self.tau)
-                * self.rng.normal()
-                * np.abs(vy)
+                * self.rng.normal(size=v.shape)
+                * np.abs(v)
             )
 
-        total_input = self._recurrent_input(self.s, vx, vy) + self._feedforward_input(
-            self.s, vx, vy
+        total_input = self._recurrent_input(self.s, v) + self._feedforward_input(
+            self.s, v
         )
         anchor_input = self._compute_anchor_input(pos) if pos is not None else 0.0
 
@@ -158,9 +156,8 @@ class AttractorNetworkBase:
             - 'popuplation_snapshots': snapshots of full network state
             - 'snapshot_indices': time indices of snapshots
         """
-        rec_cells = rec_cells or list(np.random.randint(0, self.n - 1, size=(9, 2)))
-        if np.any(np.array(rec_cells) >= self.n) or np.any(np.array(rec_cells) < 0):
-            raise ValueError(f"Indices of recorded cells must be in {0}...{self.n}")
+        rec_cells = rec_cells or list(np.random.randint(0, self.shape, size=(9, 2)))
+
         if v.ndim != 2:
             raise ValueError("Input proper velocity input")
         n_steps = v.shape[0]
@@ -169,7 +166,7 @@ class AttractorNetworkBase:
         output_dict = {}
         output_dict["cell_recording"] = np.zeros((n_steps, n_cell_records))
         output_dict["cell_indices"] = rec_cells
-        output_dict["popuplation_snapshots"] = np.zeros((n_snapshots, self.n, self.n))
+        output_dict["popuplation_snapshots"] = np.zeros((n_snapshots, *self.shape))
         output_dict["snapshot_indices"] = np.linspace(
             0, n_steps - 1, n_snapshots, dtype=int
         )
@@ -183,7 +180,10 @@ class AttractorNetworkBase:
                 else self.step(*v[step_iter])
             )
             output_dict["cell_recording"][step_iter] = np.array(
-                [self.s[*cell_index] for cell_index in output_dict["cell_indices"]]
+                [
+                    self.s[tuple(cell_index)]
+                    for cell_index in output_dict["cell_indices"]
+                ]
             )
             if step_iter == output_dict["snapshot_indices"][snapshot_iter]:
                 output_dict["popuplation_snapshots"][snapshot_iter] = self.s
@@ -191,17 +191,15 @@ class AttractorNetworkBase:
             self._record_variables(output_dict, step_iter)
         return output_dict
 
-    def _recurrent_input(self, s, vx, vy):
+    def _recurrent_input(self, s, v):
         """Compute recurrent input from network state and velocity.
 
         Parameters
         ----------
         s : np.ndarray
             Network state (activity).
-        vx : float
-            X-component of velocity.
-        vy : float
-            Y-component of velocity.
+        v : np.ndarray
+            velocity.
 
         Returns
         -------
@@ -210,17 +208,15 @@ class AttractorNetworkBase:
         """
         raise NotImplementedError("Has to be implemented by subclasses")
 
-    def _feedforward_input(self, s, vx, vy):
+    def _feedforward_input(self, s, v):
         """Compute feedforward input from velocity.
 
         Parameters
         ----------
         s : np.ndarray
             Network state (activity).
-        vx : float
-            X-component of velocity.
-        vy : float
-            Y-component of velocity.
+        v : np.ndarray
+            velocity.
 
         Returns
         -------
@@ -326,66 +322,82 @@ class ToroidZhang1996(AttractorNetworkBase):
         dt=0.5e-3,
         intrinsic_noise=0,
         input_noise=0,
-        size = 1,
+        size=1,
         use_single_bump=False,
         rng=None,
         **kwargs,
     ):
-        self.n = n
+        self.shape = (int(n),) if np.isscalar(n) else tuple(map(int, n))
+        if not self.shape or any(size < 1 for size in self.shape):
+            raise ValueError("n must be a positive integer or a sequence of integers")
+        self.ndim = len(self.shape)
         self.tau = tau
         self.dt = dt
         self.rng = rng or np.random.default_rng(42)
         self.intrinsic_noise = intrinsic_noise
         self.input_noise = input_noise
 
-        if isinstance(size, (float,int)):
-            size = (size,size)
-            size = np.array(size)
-        elif isinstance(size, (tuple,list)):
+        if isinstance(size, (float, int)):
+            size = np.ones(self.shape, dtype=float) * size
+        elif isinstance(size, (tuple, list)):
             size = np.array(size)
         else:
             raise ValueError("WTF?")
 
         if not use_single_bump:
-            beta = 0.01 * size 
+            beta = 0.01 * size
             gamma = 1.05 * beta
             a_weight = 1
             a_weight = 1
-            self.kernel_func = lambda dx2, dy2: a_weight * np.exp(-np.dot(np.stack([dx2,dy2],axis=-1),gamma)) - np.exp(
-                -np.dot(np.stack([dx2,dy2],axis=-1),beta)
+            self.kernel_func = lambda dx: a_weight * np.exp(
+                -np.dot(dx, gamma)
+            ) - np.exp(-np.dot(dx, beta))
+            self.kernel_deriv_func = (
+                lambda dx: a_weight
+                * gamma[np.newaxis, np.newaxis, :]
+                * np.exp(-np.dot(dx, gamma)[..., np.newaxis])
+                - beta[np.newaxis, np.newaxis, :]
+                * np.exp(-np.dot(dx, beta))[..., np.newaxis]
             )
-            self.kernel_deriv_func = lambda dx2, dy2: a_weight * gamma[np.newaxis,np.newaxis,:] * np.exp(
-                -np.dot(np.stack([dx2,dy2],axis=-1),gamma)[...,np.newaxis]
-            ) - beta[np.newaxis,np.newaxis,:] * np.exp(-np.dot(np.stack([dx2,dy2],axis=-1),beta))[...,np.newaxis]
 
         else:
             gamma = 0.01 * size / n
             a_weight = 1
             inhibition = 1
-            self.kernel_func = lambda dx2, dy2: a_weight * np.exp(-np.dot(np.stack([dx2,dy2],axis=-1),gamma)) - inhibition
-            self.kernel_deriv_func = lambda dx2, dy2: a_weight * gamma[np.newaxis,np.newaxis,:] * np.exp(-np.dot(np.stack([dx2,dy2],axis=-1),gamma))[...,np.newaxis]
+            self.kernel_func = (
+                lambda dx: a_weight * np.exp(-np.dot(dx, gamma)) - inhibition
+            )
+            self.kernel_deriv_func = (
+                lambda dx: a_weight
+                * gamma[np.newaxis, np.newaxis, :]
+                * np.exp(-np.dot(dx, gamma))[..., np.newaxis]
+            )
 
-        self.s = self.rng.uniform(size=(self.n, self.n)) * 0.1
+        self.s = self.rng.uniform(size=self.shape) * 0.1
         self.anchor_points = []
         self._setup_attractor(**kwargs)
 
     def _setup_attractor(self, revolutions: Union[Tuple, float] = 1):
         self.speed_modulation = self._compute_speed_modulation(revolutions)
+        print(self.speed_modulation)
         self.B0 = 1.0
 
-        K_sym, K_asym_x, K_asym_y = self._build_kernels(self.n)
-        self.K_sym_fft = np.fft.fft2(K_sym)
-        self.K_asym_x_fft = np.fft.fft2(K_asym_x)
-        self.K_asym_y_fft = np.fft.fft2(K_asym_y)
+        K_sym, K_asym = self._build_kernels(self.shape)
+        self.K_sym_fft = np.fft.fftn(K_sym)
+        self.K_asym_fft = np.fft.fftn(K_asym, axes=tuple(np.arange(K_asym.ndim - 1)))
 
-    def _distance_grid(self, n):
+    def _distance_grid(self, shape):
         """Build wrapped x and y displacement grids for an ``n``-cell lattice."""
-        idx = np.arange(n)
-        d = idx - n // 2
-        d = np.where(d > n / 2, d - n, d)
-        d = np.where(d < -n / 2, d + n, d)
-        dx, dy = np.meshgrid(d, d, indexing="ij")
-        return dx, dy
+        dist_list = []
+        for n in self.shape:
+            idx = np.arange(n)
+            d = idx - n // 2
+            d = np.where(d > n / 2, d - n, d)
+            d = np.where(d < -n / 2, d + n, d)
+            dist_list.append(d)
+        dx = np.meshgrid(*dist_list, indexing="ij")
+        dx = np.stack(dx, axis=-1)
+        return dx
 
     def _compute_speed_modulation(self, revolutions=1):
         """Compute the asymmetric-kernel scale for ``revolutions`` per cycle."""
@@ -396,55 +408,52 @@ class ToroidZhang1996(AttractorNetworkBase):
         else:
             raise ValueError("WTF?")
 
-        target_gain = self.n / (2 * np.pi) * revolutions
-        idx = np.arange(self.n)
-        d = idx - self.n // 2
-        d = np.where(d > self.n / 2, d - self.n, d)
-        d = np.where(d < -self.n / 2, d + self.n, d)
-        dxg, dyg = np.meshgrid(d, d, indexing="ij")
+        target_gain = np.asarray(self.shape) / (2 * np.pi) * revolutions
+        dist_list = []
+        for n in self.shape:
+            idx = np.arange(n)
+            d = idx - n // 2
+            d = np.where(d > n / 2, d - n, d)
+            d = np.where(d < -n / 2, d + n, d)
+            dist_list.append(d)
 
-        K_sym = self.kernel_func(dxg**2,dyg**2)
-        common = self.kernel_deriv_func(dxg**2,dyg**2)
-        dK_dx = -2 * dxg * common[...,0]  # / np.sqrt(r2 + 1e-6)
-        dK_dy = -2 * dyg * common[...,1]  # / np.sqrt(r2 + 1e-6)
+        dx = np.meshgrid(*dist_list, indexing="ij")
+        dx = np.stack(dx, axis=-1)
+
+        K_sym = self.kernel_func(dx**2)
+        common = self.kernel_deriv_func(dx**2)
+        dK_dx = -2 * dx * common
 
         norm = np.max(np.abs(K_sym))
-        dnorm = np.array([np.max(np.abs(dK_dx)),np.max(np.abs(dK_dy))])
+        dnorm = np.max(np.abs(dK_dx), axis=tuple(np.arange(self.ndim)))
         return target_gain * self.tau * dnorm / norm
 
-    def _build_kernels(self, n):
+    def _build_kernels(self, shape):
         """Construct centered symmetric and velocity-dependent kernels."""
-        dx, dy = self._distance_grid(n)
+        dx = self._distance_grid(shape)
 
-        K_sym = self.kernel_func(dx**2,dy**2)
+        K_sym = self.kernel_func(dx**2)
+        common = self.kernel_deriv_func(dx**2)
 
-        common = self.kernel_deriv_func(dx**2,dy**2)
-
-        dK_dx = -2 * dx * common[...,0]  # / np.sqrt(r2 + 1e-6)
-        dK_dy = -2 * dy * common[...,1]  # / np.sqrt(r2 + 1e-6)
+        dK_dx = -2 * dx * common
 
         norm = np.max(np.abs(K_sym))
-        dnorm_x = max(np.max(np.abs(dK_dx)), 1e-12)
-        dnorm_y = max( np.max(np.abs(dK_dy)),1e-12)
-        K_asym_x = self.speed_modulation[0] * dK_dx * (norm / dnorm_x)
-        K_asym_y = self.speed_modulation[1] * dK_dy * (norm / dnorm_y)
+        dnorm = np.max(np.abs(dK_dx), axis=tuple(np.arange(self.ndim))) 
+        K_asym = self.speed_modulation * dK_dx * (norm / dnorm)
 
         K_sym = np.fft.ifftshift(K_sym)
-        K_asym_x = np.fft.ifftshift(K_asym_x)
-        K_asym_y = np.fft.ifftshift(K_asym_y)
-        return K_sym, K_asym_x, K_asym_y
+        K_asym = np.fft.ifftshift(K_asym, axes=tuple(np.arange(self.ndim)))
+        return K_sym, K_asym
 
-    def _recurrent_input(self, s, vx, vy):
+    def _recurrent_input(self, s, v: np.ndarray):
         """Calculate recurrent input for state ``s`` and velocity ``(vx, vy)``."""
-        s_fft = np.fft.fft2(s)
-        rec = np.real(np.fft.ifft2(s_fft * self.K_sym_fft))
-        if vx != 0:
-            rec += vx * np.real(np.fft.ifft2(s_fft * self.K_asym_x_fft))
-        if vy != 0:
-            rec += vy * np.real(np.fft.ifft2(s_fft * self.K_asym_y_fft))
+        s_fft = np.fft.fftn(s)
+        rec = np.real(np.fft.ifftn(s_fft * self.K_sym_fft))
+        if v is not None and v.ndim == self.ndim:
+            rec += np.real(np.fft.ifftn(s_fft * np.dot(self.K_asym_fft, v)))
         return rec
 
-    def _feedforward_input(self, s, vx, vy):
+    def _feedforward_input(self, s, v):
         return self.B0
 
 
