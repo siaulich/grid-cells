@@ -74,7 +74,7 @@ class AttractorNetworkBase:
 
         self.anchor_points.append(lambda pos: strength * weight_func(pos) * mask)
 
-    def step(self, v=0, pos=None, intrinsic_noise=None, input_noise=None):
+    def step(self, v = 0, pos=None, intrinsic_noise=None, input_noise=None):
         """Advance the activity state by one Euler integration step."""
 
         eff_input_noise = input_noise if input_noise is not None else self.input_noise
@@ -82,7 +82,10 @@ class AttractorNetworkBase:
             intrinsic_noise if intrinsic_noise is not None else self.intrinsic_noise
         )
 
-        v = np.asarray(v)
+        if np.isscalar(v):
+            v = np.ones((self.ndim)) * v
+        else:
+            v = np.asarray(v)
 
         if eff_input_noise:
             v += (
@@ -256,7 +259,7 @@ class ToroidBurakFiete2009(AttractorNetworkBase):
             "S": np.array([0.0, -1.0]),
         }
         dir_pattern = np.array([["E", "N"], ["S", "W"]])
-        theta_dir = np.tile(dir_pattern, (self.n // 2, self.n // 2))
+        theta_dir = np.tile(dir_pattern, (self.shape[0] // 2, self.shape[1] // 2))
 
         self.directed_kernels = {}
         self.directed_masks = {}
@@ -264,31 +267,34 @@ class ToroidBurakFiete2009(AttractorNetworkBase):
         for preferred_direction in self.dir_vectors:
             self.directed_kernels[preferred_direction] = np.fft.fft2(
                 self._periodic_kernel(
-                    self.n,
+                    self.shape,
                     e_theta=self.dir_vectors[preferred_direction],
                 )
             )
             self.directed_masks[preferred_direction] = theta_dir == preferred_direction
-        self.e_theta_x = np.vectorize(lambda d: self.dir_vectors[d][0])(theta_dir)
-        self.e_theta_y = np.vectorize(lambda d: self.dir_vectors[d][1])(theta_dir)
+        e_theta_x = np.vectorize(lambda d: self.dir_vectors[d][0])(theta_dir)
+        e_theta_y = np.vectorize(lambda d: self.dir_vectors[d][1])(theta_dir)
+        self.e_theta = np.stack([e_theta_x,e_theta_y],axis=-1)
 
-    def _periodic_kernel(self, n, e_theta=(0.0, 0.0)):
+    def _periodic_kernel(self, shape, e_theta=(0.0, 0.0)):
         """Return a periodic kernel shifted in direction ``e_theta``."""
-        idx = np.arange(n)
-        d = idx - n // 2
-        d = np.where(d > n / 2, d - n, d)
-        d = np.where(d < -n / 2, d + n, d)
-        dx, dy = np.meshgrid(d, d, indexing="ij")
+        d_list = []
+        for n,iter in enumerate(shape):
+            idx = np.arange(n)
+            d = idx - n // 2
+            d = np.where(d > n / 2, d - n, d)
+            d = np.where(d < -n / 2, d + n, d)
+            d_list.append(d)
+        dx = np.stack(np.meshgrid(*d, indexing="ij"),axis=-1)
 
-        sx = dx - self.l_shift * e_theta[0]
-        sy = dy - self.l_shift * e_theta[1]
-        r2 = sx**2 + sy**2
+        sx = dx - self.l_shift * np.asarray(e_theta)[*((np.newaxis,) * self.ndim),:]
+        r2 = np.sum(sx**2,axis = -1)
 
         K = self.kernel_func(r2)
         K = np.fft.ifftshift(K)
         return K
 
-    def _recurrent_input(self, s, vx, vy):
+    def _recurrent_input(self, s, v):
         """Calculate recurrent input for activity array ``s``."""
         rec_input = np.zeros_like(s)
         for dir in self.dir_vectors:
@@ -300,10 +306,10 @@ class ToroidBurakFiete2009(AttractorNetworkBase):
             )
         return rec_input
 
-    def _feedforward_input(self, s, vx, vy):
+    def _feedforward_input(self, s, v):
         """Calculate velocity-dependent input for velocity ``(vx, vy)``."""
         return self.B0 * (
-            1.0 + self.alpha * (self.e_theta_x * vx + self.e_theta_y * vy)
+            1.0 + self.alpha * np.dot(self.e_theta, v)
         )
 
 
@@ -338,7 +344,7 @@ class ToroidZhang1996(AttractorNetworkBase):
         self.input_noise = input_noise
 
         if isinstance(size, (float, int)):
-            size = np.ones(self.shape, dtype=float) * size
+            size = np.ones((self.ndim,), dtype=float) * size
         elif isinstance(size, (tuple, list)):
             size = np.array(size)
         else:
@@ -354,9 +360,9 @@ class ToroidZhang1996(AttractorNetworkBase):
             ) - np.exp(-np.dot(dx, beta))
             self.kernel_deriv_func = (
                 lambda dx: a_weight
-                * gamma[np.newaxis, np.newaxis, :]
+                * gamma[*((np.newaxis,) * self.ndim), :]
                 * np.exp(-np.dot(dx, gamma)[..., np.newaxis])
-                - beta[np.newaxis, np.newaxis, :]
+                - beta[*((np.newaxis,) * self.ndim), :]
                 * np.exp(-np.dot(dx, beta))[..., np.newaxis]
             )
 
@@ -369,7 +375,7 @@ class ToroidZhang1996(AttractorNetworkBase):
             )
             self.kernel_deriv_func = (
                 lambda dx: a_weight
-                * gamma[np.newaxis, np.newaxis, :]
+                * gamma[*((np.newaxis,) * self.ndim), :]
                 * np.exp(-np.dot(dx, gamma))[..., np.newaxis]
             )
 
@@ -389,7 +395,7 @@ class ToroidZhang1996(AttractorNetworkBase):
     def _distance_grid(self, shape):
         """Build wrapped x and y displacement grids for an ``n``-cell lattice."""
         dist_list = []
-        for n in self.shape:
+        for n in shape:
             idx = np.arange(n)
             d = idx - n // 2
             d = np.where(d > n / 2, d - n, d)
@@ -402,7 +408,7 @@ class ToroidZhang1996(AttractorNetworkBase):
     def _compute_speed_modulation(self, revolutions=1):
         """Compute the asymmetric-kernel scale for ``revolutions`` per cycle."""
         if isinstance(revolutions, (float, int)):
-            revolutions = np.ones((2,), dtype=float) * revolutions
+            revolutions = np.ones((self.ndim,), dtype=float) * revolutions
         elif isinstance(revolutions, tuple):
             revolutions = np.array(revolutions)
         else:
@@ -449,7 +455,7 @@ class ToroidZhang1996(AttractorNetworkBase):
         """Calculate recurrent input for state ``s`` and velocity ``(vx, vy)``."""
         s_fft = np.fft.fftn(s)
         rec = np.real(np.fft.ifftn(s_fft * self.K_sym_fft))
-        if v is not None and v.ndim == self.ndim:
+        if np.any(v != 0):
             rec += np.real(np.fft.ifftn(s_fft * np.dot(self.K_asym_fft, v)))
         return rec
 
