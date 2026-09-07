@@ -7,6 +7,7 @@ toroidal lattice.
 import numpy as np
 from typing import Union, Tuple, Callable, Dict
 from tqdm import tqdm
+import warnings
 
 
 class AttractorNetworkBase:
@@ -34,6 +35,7 @@ class AttractorNetworkBase:
     Subclasses implement :meth:`_recurrent_input` and
     :meth:`_feedforward_input`.  The current activity is exposed as ``s``.
     """
+
     def __init__(
         self,
         n=64,
@@ -43,10 +45,10 @@ class AttractorNetworkBase:
         input_noise=0,
         size=1,
         use_single_bump=False,
-        rng=None,
+        rng: np.random.Generator = None,
         **kwargs,
     ):
-        
+
         self.shape = (int(n),) if np.isscalar(n) else tuple(map(int, n))
         if not self.shape or any(size < 1 for size in self.shape):
             raise ValueError("n must be a positive integer or a sequence of integers")
@@ -74,9 +76,9 @@ class AttractorNetworkBase:
             ) - np.exp(-np.dot(dx, beta))
             self.kernel_deriv_func = (
                 lambda dx: a_weight
-                * gamma[*((np.newaxis,) * self.ndim), :]
+                * gamma.reshape((1,) * self.ndim + (-1,))
                 * np.exp(-np.dot(dx, gamma)[..., np.newaxis])
-                - beta[*((np.newaxis,) * self.ndim), :]
+                - beta.reshape((1,) * self.ndim + (-1,))
                 * np.exp(-np.dot(dx, beta))[..., np.newaxis]
             )
 
@@ -89,13 +91,14 @@ class AttractorNetworkBase:
             )
             self.kernel_deriv_func = (
                 lambda dx: a_weight
-                * gamma[*((np.newaxis,) * self.ndim), :]
+                * gamma.reshape((1,) * self.ndim + (-1,))
                 * np.exp(-np.dot(dx, gamma))[..., np.newaxis]
             )
 
         self.s = self.rng.uniform(size=self.shape) * 0.1
         self.anchor_points = []
         self._setup_attractor(**kwargs)
+
     def add_anchor_point(
         self,
         weight_func: Callable = lambda position: np.exp(
@@ -129,7 +132,7 @@ class AttractorNetworkBase:
 
         self.anchor_points.append(lambda pos: strength * weight_func(pos) * mask)
 
-    def step(self, v = 0, pos=None, intrinsic_noise=None, input_noise=None):
+    def step(self, v=0, pos=None, intrinsic_noise=None, input_noise=None):
         """Advance the activity state by one Euler integration step.
 
         Parameters
@@ -183,7 +186,7 @@ class AttractorNetworkBase:
     def warm_up(self, tol=1e-5, max_iter=100000, pos=None):
         """Relax the network until consecutive states differ by less than ``tol``."""
         prev_net_state = self.s.copy()
-        self.step()
+        self.step(pos=pos, intrinsic_noise=0, input_noise=0)
         step = 0
         while np.max(np.abs(prev_net_state - self.s)) > tol:
             prev_net_state = self.s.copy()
@@ -224,19 +227,17 @@ class AttractorNetworkBase:
             - 'popuplation_snapshots': snapshots of full network state
             - 'snapshot_indices': time indices of snapshots
         """
-        rec_cells = rec_cells or list(np.random.randint(0, self.shape, size=(9, self.ndim)))
-
+        rec_cells = rec_cells or list(
+            self.rng.integers(0, self.shape, size=(9, self.ndim))
+        )
 
         if v.ndim < 2:
-            v = v[...,np.newaxis]
+            v = v[..., np.newaxis]
         elif v.ndim > 2:
-            raise("WTF?!")
+            raise ValueError("WTF?!")
 
         if v.shape[1] != self.ndim:
             raise ValueError("Velocity input must match dimension of attractor network")
-
-
-
 
         n_steps = v.shape[0]
         n_cell_records = len(rec_cells)
@@ -309,7 +310,7 @@ class AttractorNetworkBase:
         This method should be overridden by subclasses to initialize
         any additional attractor-specific parameters or kernels.
         """
-        print("WARNING: No additional setup for attractor was implemented")
+        warnings.warn("No additional setup for attractor was implemented")
         pass
 
 
@@ -349,21 +350,21 @@ class ToroidBurakFiete2009(AttractorNetworkBase):
             self.directed_masks[preferred_direction] = theta_dir == preferred_direction
         e_theta_x = np.vectorize(lambda d: self.dir_vectors[d][0])(theta_dir)
         e_theta_y = np.vectorize(lambda d: self.dir_vectors[d][1])(theta_dir)
-        self.e_theta = np.stack([e_theta_x,e_theta_y],axis=-1)
+        self.e_theta = np.stack([e_theta_x, e_theta_y], axis=-1)
 
     def _periodic_kernel(self, shape, e_theta=(0.0, 0.0)):
         """Return a periodic kernel shifted in direction ``e_theta``."""
         d_list = []
-        for n,iter in enumerate(shape):
+        for n, iter in enumerate(shape):
             idx = np.arange(n)
             d = idx - n // 2
             d = np.where(d > n / 2, d - n, d)
             d = np.where(d < -n / 2, d + n, d)
             d_list.append(d)
-        dx = np.stack(np.meshgrid(*d, indexing="ij"),axis=-1)
+        dx = np.stack(np.meshgrid(*d, indexing="ij"), axis=-1)
 
-        sx = dx - self.l_shift * np.asarray(e_theta)[*((np.newaxis,) * self.ndim),:]
-        r2 = np.sum(sx**2,axis = -1)
+        sx = dx - self.l_shift * np.asarray(e_theta).reshape((1,) * self.ndim + (-1,))
+        r2 = np.sum(sx**2, axis=-1)
 
         K = self.kernel_func(r2)
         K = np.fft.ifftshift(K)
@@ -383,9 +384,7 @@ class ToroidBurakFiete2009(AttractorNetworkBase):
 
     def _feedforward_input(self, s, v):
         """Calculate velocity-dependent input for velocity ``(vx, vy)``."""
-        return self.B0 * (
-            1.0 + self.alpha * np.dot(self.e_theta, v)
-        )
+        return self.B0 * (1.0 + self.alpha * np.dot(self.e_theta, v))
 
 
 class ToroidZhang1996(AttractorNetworkBase):
@@ -396,11 +395,8 @@ class ToroidZhang1996(AttractorNetworkBase):
     To establish the grid pattern, a warm up with :meth:`warmup` is recommended.
     """
 
-    
-
     def _setup_attractor(self, revolutions: Union[Tuple, float] = 1):
         self.speed_modulation = self._compute_speed_modulation(revolutions)
-        print(self.speed_modulation)
         self.B0 = 1.0
 
         K_sym, K_asym = self._build_kernels(self.shape)
@@ -459,7 +455,7 @@ class ToroidZhang1996(AttractorNetworkBase):
         dK_dx = -2 * dx * common
 
         norm = np.max(np.abs(K_sym))
-        dnorm = np.max(np.abs(dK_dx), axis=tuple(np.arange(self.ndim))) 
+        dnorm = np.max(np.abs(dK_dx), axis=tuple(np.arange(self.ndim)))
         K_asym = self.speed_modulation * dK_dx * (norm / dnorm)
 
         K_sym = np.fft.ifftshift(K_sym)
@@ -504,16 +500,18 @@ class HeadDirection(ToroidZhang1996):
         shape = s_2d.shape
 
         angle_list = []
-        for axis_iter,nx in enumerate(shape):
+        for axis_iter, nx in enumerate(shape):
             x_phases = 2 * np.pi * np.arange(nx) / nx
 
-            profile_x = np.sum(s_2d, axis=tuple([i for i in range(len(shape)) if i != axis_iter]))
+            profile_x = np.sum(
+                s_2d, axis=tuple([i for i in range(len(shape)) if i != axis_iter])
+            )
 
             mean_x_angle = np.angle(np.sum(profile_x * np.exp(1j * x_phases)))
 
             angle_1 = (-mean_x_angle + 2 * np.pi) % (2 * np.pi)
             angle_list.append(angle_1)
-    
+
         return np.array(angle_list)
 
     def encode_orientation(self, target_angles, width=0.3):
@@ -534,10 +532,10 @@ class HeadDirection(ToroidZhang1996):
             x_phases = 2 * np.pi * np.arange(nx) / nx
             phases_list.append(x_phases)
         X = np.meshgrid(*phases_list, indexing="ij")
-        X = np.stack(X,axis=-1)
+        X = np.stack(X, axis=-1)
 
         dx = np.arctan2(np.sin(-(X + target_angles)), np.cos(-(X + target_angles)))
 
-        s_2d = np.exp(-(np.sum(dx**2,axis = -1)) / (2 * width**2))
+        s_2d = np.exp(-(np.sum(dx**2, axis=-1)) / (2 * width**2))
 
         return s_2d

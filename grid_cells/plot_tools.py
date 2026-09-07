@@ -9,7 +9,7 @@ def activity_map(
     activity: np.ndarray,
     nbins: Union[Tuple[int], int] = 25,
     sigma: Optional[float] = None,
-) -> Tuple[np.ndarray, List[np.ndarray]]:
+) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray]]:
     """
     Compute mean activity map binned by position.
 
