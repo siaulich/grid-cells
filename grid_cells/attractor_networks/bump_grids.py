@@ -10,6 +10,30 @@ from tqdm import tqdm
 
 
 class AttractorNetworkBase:
+    """Base class for continuous attractor networks on a periodic lattice.
+
+    Parameters
+    ----------
+    n : int or tuple of int
+        Number of cells along each lattice dimension.
+    tau : float
+        Network time constant, in seconds.
+    dt : float
+        Euler integration timestep, in seconds.
+    intrinsic_noise, input_noise : float
+        Standard noise scales for activity and velocity input, respectively.
+    size : float or sequence of float
+        Spatial scale of the interaction kernel in each dimension.
+    use_single_bump : bool
+        Select the single-bump kernel variant when true.
+    rng : numpy.random.Generator, optional
+        Random number generator used to initialize activity and sample noise.
+
+    Notes
+    -----
+    Subclasses implement :meth:`_recurrent_input` and
+    :meth:`_feedforward_input`.  The current activity is exposed as ``s``.
+    """
     def __init__(
         self,
         n=64,
@@ -17,11 +41,12 @@ class AttractorNetworkBase:
         dt=0.5e-3,
         intrinsic_noise=0,
         input_noise=0,
-        periodicity=20,
+        size=1,
         use_single_bump=False,
         rng=None,
         **kwargs,
     ):
+        
         self.shape = (int(n),) if np.isscalar(n) else tuple(map(int, n))
         if not self.shape or any(size < 1 for size in self.shape):
             raise ValueError("n must be a positive integer or a sequence of integers")
@@ -32,29 +57,45 @@ class AttractorNetworkBase:
         self.intrinsic_noise = intrinsic_noise
         self.input_noise = input_noise
 
+        if isinstance(size, (float, int)):
+            size = np.ones((self.ndim,), dtype=float) * size
+        elif isinstance(size, (tuple, list)):
+            size = np.array(size)
+        else:
+            raise ValueError("WTF?")
+
         if not use_single_bump:
-            beta = 3.0 / periodicity**2
+            beta = 0.01 * size
             gamma = 1.05 * beta
             a_weight = 1
             a_weight = 1
-            self.kernel_func = lambda r2: a_weight * np.exp(-gamma * r2) - np.exp(
-                -beta * r2
+            self.kernel_func = lambda dx: a_weight * np.exp(
+                -np.dot(dx, gamma)
+            ) - np.exp(-np.dot(dx, beta))
+            self.kernel_deriv_func = (
+                lambda dx: a_weight
+                * gamma[*((np.newaxis,) * self.ndim), :]
+                * np.exp(-np.dot(dx, gamma)[..., np.newaxis])
+                - beta[*((np.newaxis,) * self.ndim), :]
+                * np.exp(-np.dot(dx, beta))[..., np.newaxis]
             )
-            self.kernel_deriv_func = lambda r2: a_weight * gamma * np.exp(
-                -gamma * r2
-            ) - beta * np.exp(-beta * r2)
 
         else:
-            gamma = 0.1 / n
+            gamma = 0.01 * size / n
             a_weight = 1
             inhibition = 1
-            self.kernel_func = lambda r2: a_weight * np.exp(-gamma * r2) - inhibition
-            self.kernel_deriv_func = lambda r2: a_weight * gamma * np.exp(-gamma * r2)
+            self.kernel_func = (
+                lambda dx: a_weight * np.exp(-np.dot(dx, gamma)) - inhibition
+            )
+            self.kernel_deriv_func = (
+                lambda dx: a_weight
+                * gamma[*((np.newaxis,) * self.ndim), :]
+                * np.exp(-np.dot(dx, gamma))[..., np.newaxis]
+            )
 
         self.s = self.rng.uniform(size=self.shape) * 0.1
         self.anchor_points = []
         self._setup_attractor(**kwargs)
-
     def add_anchor_point(
         self,
         weight_func: Callable = lambda position: np.exp(
@@ -64,6 +105,20 @@ class AttractorNetworkBase:
         cell_index=(0, 0),
         strength=0.1,
     ):
+        """Add a localized external input tied to a spatial position.
+
+        Parameters
+        ----------
+        weight_func : callable
+            Function mapping a position to the anchor's scalar weight.
+        mask : ndarray, optional
+            Cell mask receiving the input. If omitted, only ``cell_index`` is
+            selected.
+        cell_index : tuple of int
+            Cell selected when ``mask`` is not supplied.
+        strength : float
+            Multiplicative input strength.
+        """
         if len(cell_index) != self.ndim:
             raise ValueError(f"cell_index must contain {self.ndim} indices")
         if any(not (0 <= i < size) for i, size in zip(cell_index, self.shape)):
@@ -75,7 +130,17 @@ class AttractorNetworkBase:
         self.anchor_points.append(lambda pos: strength * weight_func(pos) * mask)
 
     def step(self, v = 0, pos=None, intrinsic_noise=None, input_noise=None):
-        """Advance the activity state by one Euler integration step."""
+        """Advance the activity state by one Euler integration step.
+
+        Parameters
+        ----------
+        v : scalar or array-like
+            Velocity vector. A scalar is broadcast to every dimension.
+        pos : array-like, optional
+            Position passed to registered anchor points.
+        intrinsic_noise, input_noise : float, optional
+            Per-step noise scales overriding the values configured at init.
+        """
 
         eff_input_noise = input_noise if input_noise is not None else self.input_noise
         eff_intrinsic_noise = (
@@ -137,7 +202,7 @@ class AttractorNetworkBase:
     def run_simulation(
         self, v: np.ndarray, pos=None, rec_cells=None, n_snapshots=1000
     ) -> Dict[str, np.ndarray]:
-        """Run the network simulation with given velocity input.
+        """Run the network simulation with a sequence of velocity inputs.
 
         Parameters
         ----------
@@ -159,10 +224,20 @@ class AttractorNetworkBase:
             - 'popuplation_snapshots': snapshots of full network state
             - 'snapshot_indices': time indices of snapshots
         """
-        rec_cells = rec_cells or list(np.random.randint(0, self.shape, size=(9, 2)))
+        rec_cells = rec_cells or list(np.random.randint(0, self.shape, size=(9, self.ndim)))
 
-        if v.ndim != 2:
-            raise ValueError("Input proper velocity input")
+
+        if v.ndim < 2:
+            v = v[...,np.newaxis]
+        elif v.ndim > 2:
+            raise("WTF?!")
+
+        if v.shape[1] != self.ndim:
+            raise ValueError("Velocity input must match dimension of attractor network")
+
+
+
+
         n_steps = v.shape[0]
         n_cell_records = len(rec_cells)
 
@@ -321,67 +396,7 @@ class ToroidZhang1996(AttractorNetworkBase):
     To establish the grid pattern, a warm up with :meth:`warmup` is recommended.
     """
 
-    def __init__(
-        self,
-        n=64,
-        tau=10e-3,
-        dt=0.5e-3,
-        intrinsic_noise=0,
-        input_noise=0,
-        size=1,
-        use_single_bump=False,
-        rng=None,
-        **kwargs,
-    ):
-        self.shape = (int(n),) if np.isscalar(n) else tuple(map(int, n))
-        if not self.shape or any(size < 1 for size in self.shape):
-            raise ValueError("n must be a positive integer or a sequence of integers")
-        self.ndim = len(self.shape)
-        self.tau = tau
-        self.dt = dt
-        self.rng = rng or np.random.default_rng(42)
-        self.intrinsic_noise = intrinsic_noise
-        self.input_noise = input_noise
-
-        if isinstance(size, (float, int)):
-            size = np.ones((self.ndim,), dtype=float) * size
-        elif isinstance(size, (tuple, list)):
-            size = np.array(size)
-        else:
-            raise ValueError("WTF?")
-
-        if not use_single_bump:
-            beta = 0.01 * size
-            gamma = 1.05 * beta
-            a_weight = 1
-            a_weight = 1
-            self.kernel_func = lambda dx: a_weight * np.exp(
-                -np.dot(dx, gamma)
-            ) - np.exp(-np.dot(dx, beta))
-            self.kernel_deriv_func = (
-                lambda dx: a_weight
-                * gamma[*((np.newaxis,) * self.ndim), :]
-                * np.exp(-np.dot(dx, gamma)[..., np.newaxis])
-                - beta[*((np.newaxis,) * self.ndim), :]
-                * np.exp(-np.dot(dx, beta))[..., np.newaxis]
-            )
-
-        else:
-            gamma = 0.01 * size / n
-            a_weight = 1
-            inhibition = 1
-            self.kernel_func = (
-                lambda dx: a_weight * np.exp(-np.dot(dx, gamma)) - inhibition
-            )
-            self.kernel_deriv_func = (
-                lambda dx: a_weight
-                * gamma[*((np.newaxis,) * self.ndim), :]
-                * np.exp(-np.dot(dx, gamma))[..., np.newaxis]
-            )
-
-        self.s = self.rng.uniform(size=self.shape) * 0.1
-        self.anchor_points = []
-        self._setup_attractor(**kwargs)
+    
 
     def _setup_attractor(self, revolutions: Union[Tuple, float] = 1):
         self.speed_modulation = self._compute_speed_modulation(revolutions)
@@ -464,6 +479,13 @@ class ToroidZhang1996(AttractorNetworkBase):
 
 
 class HeadDirection(ToroidZhang1996):
+    """Zhang network specialized for representing head direction.
+
+    The population activity forms a bump on the periodic sheet.  Use
+    :meth:`decode_orientation` to read its position and
+    :meth:`encode_orientation` to construct an activity pattern for target
+    angles.
+    """
 
     def _add_variables(self, output_dict, n_steps):
         output_dict["decoded_angle"] = np.zeros((n_steps, 2))
@@ -473,33 +495,29 @@ class HeadDirection(ToroidZhang1996):
         output_dict["decoded_angle"][step_iter] = self.decode_orientation()
 
     def decode_orientation(self):
-        """
-        Decodes the estimated orientation angles from the 2D network sheet.
+        """Decode the activity bump position into one angle per axis.
 
         Returns:
         - np.array([angle_x, angle_y]): Estimated angles in radians [0, 2*pi).
         """
         s_2d = self.s
-        nx, ny = s_2d.shape
+        shape = s_2d.shape
 
-        x_phases = 2 * np.pi * np.arange(nx) / nx
-        y_phases = 2 * np.pi * np.arange(ny) / ny
+        angle_list = []
+        for axis_iter,nx in enumerate(shape):
+            x_phases = 2 * np.pi * np.arange(nx) / nx
 
-        profile_x = np.sum(s_2d, axis=1)
-        profile_y = np.sum(s_2d, axis=0)
+            profile_x = np.sum(s_2d, axis=tuple([i for i in range(len(shape)) if i != axis_iter]))
 
-        mean_x_angle = np.angle(np.sum(profile_x * np.exp(1j * x_phases)))
-        mean_y_angle = np.angle(np.sum(profile_y * np.exp(1j * y_phases)))
+            mean_x_angle = np.angle(np.sum(profile_x * np.exp(1j * x_phases)))
 
-        angle_1 = (-mean_x_angle + 2 * np.pi) % (2 * np.pi)
-        angle_2 = (-mean_y_angle + 2 * np.pi) % (2 * np.pi)
-
-        return np.array([angle_1, angle_2])
+            angle_1 = (-mean_x_angle + 2 * np.pi) % (2 * np.pi)
+            angle_list.append(angle_1)
+    
+        return np.array(angle_list)
 
     def encode_orientation(self, target_angles, width=0.3):
-        """
-        Generates the corresponding neural activity state (a 2D bump)
-        for a given set of target orientation angles.
+        """Generate a periodic Gaussian bump for target orientation angles.
 
         Parameters:
         - target_angles: np.array or list of [angle_x, angle_y] in radians.
@@ -508,15 +526,18 @@ class HeadDirection(ToroidZhang1996):
         Returns:
         - s_2d: np.array of shape (nx, ny) representing the network activity state.
         """
-        nx, ny = self.s.shape
-        target_x, target_y = target_angles
+        shape = self.s.shape
+        target_angles = np.asarray(target_angles)[*((np.newaxis,) * (len(shape) + 1))]
 
-        x_phases = 2 * np.pi * np.arange(nx) / nx
-        y_phases = 2 * np.pi * np.arange(ny) / ny
-        X, Y = np.meshgrid(x_phases, y_phases, indexing="ij")
+        phases_list = []
+        for nx in shape:
+            x_phases = 2 * np.pi * np.arange(nx) / nx
+            phases_list.append(x_phases)
+        X = np.meshgrid(*phases_list, indexing="ij")
+        X = np.stack(X,axis=-1)
 
-        dx = np.arctan2(np.sin(-(X + target_x)), np.cos(-(X + target_x)))
-        dy = np.arctan2(np.sin(-(Y + target_y)), np.cos(-(Y + target_y)))
-        s_2d = np.exp(-(dx**2 + dy**2) / (2 * width**2))
+        dx = np.arctan2(np.sin(-(X + target_angles)), np.cos(-(X + target_angles)))
+
+        s_2d = np.exp(-(np.sum(dx**2,axis = -1)) / (2 * width**2))
 
         return s_2d
