@@ -84,3 +84,11 @@ def get_plot_grid(n_plots, figsize=(4, 4), **kwargs):
 
 def angular_error(decoded, true):
     return np.arctan2(np.sin(decoded - true), np.cos(decoded - true)) / np.pi
+
+
+def smooth_ts(array: np.ndarray, interval: int):
+    return (
+        array[: (len(array) // interval) * interval]
+        .reshape((-1,) + (interval,) + array.shape[1:])
+        .mean(axis=1)
+    )

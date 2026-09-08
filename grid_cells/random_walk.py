@@ -110,7 +110,7 @@ def compute_spherical_coordinates(heading):
     heading = heading / np.clip(heading_norm, 1e-12, None)
 
     azimuth = np.arctan2(heading[..., 1], heading[..., 0])
-    pitch = np.arcsin(np.clip(heading[..., 2], -1.0, 1.0)) + np.pi / 2
+    pitch = np.arcsin(np.clip(heading[..., 2], -1.0, 1.0))
 
     return np.stack((azimuth, pitch), axis=-1)
 
@@ -204,7 +204,7 @@ def generate_bat_flight(
 
     # Initialize state
     if initial_heading is None:
-        current_heading = rng.normal(size=3)
+        current_heading = np.array([1, 0, 0], dtype=float)
         current_heading /= np.linalg.norm(current_heading)
     else:
         initial_heading = np.array(initial_heading, dtype=float).flatten()
@@ -248,7 +248,7 @@ def generate_bat_flight(
 
     position[0] = current_position
     velocity[0] = current_speed * current_heading
-    toroid_heading[0] = np.array([current_azimuth, current_pitch])
+    toroid_heading[0] = compute_spherical_coordinates(current_heading)
     sphere_heading[0] = compute_spherical_coordinates(current_heading)
 
     # OU params for steering
@@ -259,9 +259,9 @@ def generate_bat_flight(
     max_angular_vel = 20.0  # rad/s
 
     for step in tqdm.tqdm(range(1, n_steps)):
-        h_x = np.cos(current_pitch - np.pi / 2) * np.cos(current_azimuth)
-        h_y = np.cos(current_pitch - np.pi / 2) * np.sin(current_azimuth)
-        h_z = np.sin(current_pitch - np.pi / 2)
+        h_x = np.cos(current_pitch) * np.cos(current_azimuth)
+        h_y = np.cos(current_pitch) * np.sin(current_azimuth)
+        h_z = np.sin(current_pitch)
         current_heading = np.array([h_x, h_y, h_z])
 
         facing_mask = (
@@ -272,9 +272,9 @@ def generate_bat_flight(
         u_azimuth = np.array([-np.sin(current_azimuth), np.cos(current_azimuth), 0.0])
         u_pitch = np.array(
             [
-                -np.cos(current_azimuth) * np.sin(current_pitch - np.pi / 2),
-                -np.sin(current_azimuth) * np.sin(current_pitch - np.pi / 2),
-                np.cos(current_pitch - np.pi / 2),
+                -np.cos(current_azimuth) * np.sin(current_pitch),
+                -np.sin(current_azimuth) * np.sin(current_pitch),
+                np.cos(current_pitch),
             ]
         )
 
@@ -294,11 +294,13 @@ def generate_bat_flight(
             total_steering = total_steering * (max_angular_vel / steering_norm)
 
         current_azimuth = (current_azimuth + total_steering[0] * dt) % (2 * np.pi)
-        current_pitch = (current_pitch + total_steering[1] * dt) % (2 * np.pi)
+        current_pitch = (current_pitch + total_steering[1] * dt + np.pi) % (
+            2 * np.pi
+        ) - np.pi
 
-        h_x = np.cos(current_pitch - np.pi / 2) * np.cos(current_azimuth)
-        h_y = np.cos(current_pitch - np.pi / 2) * np.sin(current_azimuth)
-        h_z = np.sin(current_pitch - np.pi / 2)
+        h_x = np.cos(current_pitch) * np.cos(current_azimuth)
+        h_y = np.cos(current_pitch) * np.sin(current_azimuth)
+        h_z = np.sin(current_pitch)
         current_heading = np.array([h_x, h_y, h_z])
 
         slow_mask = (
@@ -330,7 +332,7 @@ def generate_bat_flight(
         toroid_heading[step] = [current_azimuth, current_pitch]
         heading_velocity[step] = total_steering
         sphere_heading[step] = compute_spherical_coordinates(current_heading)
-        invertedness[step] = np.abs(current_pitch) > np.pi
+        invertedness[step] = np.abs(current_pitch) > np.pi / 2
 
     return {
         "pos": position,
