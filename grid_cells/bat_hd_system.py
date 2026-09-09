@@ -275,7 +275,7 @@ class BatHeadDirectionSystem:
         dt=0.5e-3,
         intrinsic_noise=0,
         input_noise=0.1,
-        size=1,
+        size=0.5,
         rng: np.random.Generator = None,
         **kwargs,
     ):
@@ -310,9 +310,9 @@ class BatHeadDirectionSystem:
         self.rng = rng
         self.activation_sigma = 0.1
         self.connectivity_sigma = 0.1
-        self.forward_strength = 0.1
+        self.forward_strength = 0.5
         self.backward_strength = 0.1
-        self.feedback_strength = 1
+        self.feedback_strength = 0.1
         self.inhibition = 1
         self.conjunctive_neurons = np.zeros(n_conjunctive, dtype=float)
         self.azimuth_weight_vectors = np.zeros((n_conjunctive, n_azimuth), dtype=float)
@@ -398,7 +398,7 @@ class BatHeadDirectionSystem:
                 + np.dot(self.azimuth_weight_vectors, self.azimuth_ring.s)
             )
             * self.forward_strength
-            + feedback_vector * self.feedback_strength
+            #+ feedback_vector * self.feedback_strength
             - self.inhibition
         )
         rate_derivatives = -self.conjunctive_neurons + np.maximum(total_input, 0.0)
@@ -410,13 +410,13 @@ class BatHeadDirectionSystem:
         )
         self.azimuth_ring.step(
             v_azimuth,
-            anchor_input=self.backward_strength
-            * np.dot(self.azimuth_weight_vectors.T, previous_conj_state),
+            anchor_input=self.feedback_strength
+            * np.dot(self.azimuth_weight_vectors.T, feedback_vector),
         )
         self.pitch_ring.step(
             v_pitch,
-            anchor_input=self.backward_strength
-            * np.dot(self.pitch_weight_vectors.T, previous_conj_state),
+            anchor_input=self.feedback_strength
+            * np.dot(self.pitch_weight_vectors.T, feedback_vector),
         )
 
     def run_simulation(
