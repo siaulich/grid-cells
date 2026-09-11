@@ -5,6 +5,12 @@ from tqdm import tqdm
 from .plot_tools import angular_error
 
 
+def sphere_to_toroid(yaw, pitch):
+    pair_1 = np.array([yaw, pitch])
+    pair_2 = np.array([(yaw + np.pi) % (2 * np.pi), (np.pi - pitch) % (2 * np.pi)])
+    return pair_1, pair_2
+
+
 class HeadDirectionNetwork:
     def __init__(
         self,
@@ -32,7 +38,7 @@ class HeadDirectionNetwork:
         if isinstance(size, (float, int)):
             size = np.ones((self.ndim,), dtype=float) * size
         elif isinstance(size, (tuple, list)):
-            size = np.array(size)
+            size = np.asarray(size)
         else:
             raise ValueError("WTF?")
 
@@ -53,7 +59,7 @@ class HeadDirectionNetwork:
             )
 
         else:
-            gamma = 0.01 * size / n
+            gamma = 0.01 / np.asarray(n) / (size  * 6)
             a_weight = 1
             inhibition = 1
             self.kernel_func = (
@@ -262,26 +268,30 @@ class HeadDirectionNetwork:
 
         s_2d = np.exp(-(np.sum(dx**2, axis=-1)) / (2 * width**2))
 
-        return s_2d
+        return s_2d / np.sum(s_2d)
 
 
 class BatHeadDirectionSystem:
+
     def __init__(
         self,
         n_conjunctive=5,
-        n_azimuth=256,
+        n_anchor=5,
+        n_yaw=256,
         n_pitch=256,
         tau=10e-3,
         dt=0.5e-3,
         intrinsic_noise=0,
         input_noise=0.1,
-        size=0.5,
+        size=1/3,
+        tau_visual=None,
+        eps=1e-8,
         rng: np.random.Generator = None,
         **kwargs,
     ):
         rng = rng or np.random.default_rng(seed=0)
-        self.azimuth_ring = HeadDirectionNetwork(
-            (n_azimuth,),
+        self.yaw_ring = HeadDirectionNetwork(
+            (n_yaw,),
             tau,
             dt,
             intrinsic_noise,
@@ -304,51 +314,147 @@ class BatHeadDirectionSystem:
         )
         self.tau = tau
         self.dt = dt
+        self.tau_visual = tau_visual if tau_visual is not None else 2 * tau
+        self.eps = eps
+
         self.n_conjunctive = n_conjunctive
-        self.n_azimuth = n_azimuth
+        self.n_anchor = n_anchor
+        self.n_yaw = n_yaw
         self.n_pitch = n_pitch
         self.rng = rng
         self.activation_sigma = 0.1
         self.connectivity_sigma = 0.1
+
         self.forward_strength = 0.5
-        self.backward_strength = 0.1
-        self.feedback_strength = 0.1
+        self.anchor_strength = 1
         self.inhibition = 1
+
         self.conjunctive_neurons = np.zeros(n_conjunctive, dtype=float)
-        self.azimuth_weight_vectors = np.zeros((n_conjunctive, n_azimuth), dtype=float)
-        self.pitch_weight_vectors = np.zeros((n_conjunctive, n_pitch), dtype=float)
+
+        raw_yaw_conj_w = np.zeros((n_conjunctive, n_yaw), dtype=float)
+        raw_pitch_conj_w = np.zeros((n_conjunctive, n_pitch), dtype=float)
         self.conjunctive_angels = rng.random(size=(n_conjunctive, 2)) * 2 * np.pi
 
-        for neuron_index, [azimuth, pitch] in enumerate(self.conjunctive_angels):
-            self.azimuth_weight_vectors[neuron_index] = (
-                self.azimuth_ring.encode_orientation(azimuth, self.connectivity_sigma)
+        for neuron_index, [yaw, pitch] in enumerate(self.conjunctive_angels):
+            raw_yaw_conj_w[neuron_index] = self.yaw_ring.encode_orientation(
+                yaw, self.connectivity_sigma
             )
-            self.pitch_weight_vectors[neuron_index] = (
-                self.pitch_ring.encode_orientation(pitch, self.connectivity_sigma)
+            raw_pitch_conj_w[neuron_index] = self.pitch_ring.encode_orientation(
+                pitch, self.connectivity_sigma
             )
+
+
+        upward_clearence = 0.2
+        self.anchor_angles = (
+            rng.uniform(
+                low=[0, upward_clearence],
+                high=[2 * np.pi, (1 - upward_clearence) * np.pi],
+                size=(n_anchor, 2),
+            )
+            * np.array([2 * np.pi, np.pi - 0.1])[np.newaxis, :]
+        )
+        self.visual_trace = np.zeros(n_anchor, dtype=float)
+
+        raw_yaw_anchor_w = np.zeros((n_yaw, n_anchor), dtype=float)
+        raw_pitch_anchor_w = np.zeros((n_pitch, n_anchor), dtype=float)
+
+        for neuron_index, [azimuth, polar] in enumerate(self.anchor_angles):
+            for [yaw, pitch] in sphere_to_toroid(azimuth, polar):
+                raw_yaw_anchor_w[..., neuron_index] = self.yaw_ring.encode_orientation(
+                    yaw, self.connectivity_sigma
+                )
+                raw_pitch_anchor_w[..., neuron_index] = (
+                    self.pitch_ring.encode_orientation(pitch, self.connectivity_sigma)
+                )
+
+        self._yaw_fwd = raw_yaw_conj_w
+        self._pitch_fwd = raw_pitch_conj_w
+
+        self._yaw_anchor_w = raw_yaw_anchor_w
+        self._pitch_anchor_w = raw_pitch_anchor_w
 
         self.intrinsic_noise = intrinsic_noise
         self.input_noise = input_noise
 
-    def activation_weight_func(
-        self,
-        position,
-        anchor,
-    ):
+        self.speed_gate_k = 2
+        self.speed_gate_thr = 10
+
+    def activation_weight_func(self, position, anchor):
         err = angular_error(position, anchor)
         d2 = np.sum(err**2, axis=-1)
         return np.exp(-d2 / (2 * self.activation_sigma**2))
 
+    def step(
+        self,
+        v,
+        dir: float = None,
+    ):
+        if dir is not None:
+            raw_visual = self.activation_weight_func(
+                self.anchor_angles,
+                dir[np.newaxis, :],
+            )
+        else:
+            raw_visual = np.zeros_like(self.visual_trace)
+
+        yaw_overlap = np.dot(self._yaw_fwd, self.yaw_ring.s)
+        pitch_overlap = np.dot(self._pitch_fwd, self.pitch_ring.s)
+
+        forward_input = self.forward_strength * (yaw_overlap + pitch_overlap)
+
+        total_input = forward_input - self.inhibition
+
+        rate_derivatives = -self.conjunctive_neurons + np.maximum(total_input, 0.0)
+
+        intrinsic_noise_term = 0.0
+        if self.intrinsic_noise:
+            noise_amp = self.intrinsic_noise * np.sqrt(self.dt / self.tau)
+            intrinsic_noise_term = noise_amp * self.rng.normal(
+                size=self.conjunctive_neurons.shape
+            )
+
+        self.conjunctive_neurons = (
+            self.conjunctive_neurons
+            + (self.dt / self.tau) * rate_derivatives
+            + intrinsic_noise_term
+        )
+
+        self.visual_trace = self.visual_trace + (self.dt / self.tau_visual) * (
+            raw_visual - self.visual_trace
+        )
+
+        speed = np.linalg.norm(v)
+        anchor_modulation = 1.0 / (
+            1.0 + np.exp(self.speed_gate_k * (speed - self.speed_gate_thr))
+        )
+
+        az_anchor_input = (
+            self.anchor_strength
+            * anchor_modulation
+            * np.dot(self._yaw_anchor_w, self.visual_trace)
+        )
+        pi_anchor_input = (
+            self.anchor_strength
+            * anchor_modulation
+            * np.dot(self._pitch_anchor_w, self.visual_trace)
+        )
+
+        self.yaw_ring.step(v[0], anchor_input=az_anchor_input)
+        self.pitch_ring.step(v[1], anchor_input=pi_anchor_input)
+
     def warm_up(
-        self, tol=1e-5, max_iter=100000, initial_pos: np.ndarray = np.array([0, 0])
+        self, tol=1e-5, max_iter=100000, initial_dir: np.ndarray = np.array([0, 0])
     ):
         """Relax the network until consecutive states differ by less than ``tol``."""
-        azimuth_pos, pitch_pos = initial_pos[[0, 0]]
-        self.azimuth_ring.s = self.azimuth_ring.encode_orientation(azimuth_pos)
-        self.pitch_ring.s = self.pitch_ring.encode_orientation(pitch_pos)
+        yaw_pos, pitch_pos = initial_dir[[0, 1]]
+        yaw_init = self.yaw_ring.encode_orientation(yaw_pos)
+        self.yaw_ring.s = yaw_init / np.max(yaw_init)
 
-        prev_azimuth_state = self.azimuth_ring.s.copy()
-        self.azimuth_ring.step(pos=azimuth_pos, intrinsic_noise=0, input_noise=0)
+        pitch_init = self.pitch_ring.encode_orientation(pitch_pos)
+        self.pitch_ring.s = pitch_init / np.max(pitch_init)
+
+        prev_yaw_state = self.yaw_ring.s.copy()
+        self.yaw_ring.step(pos=yaw_pos, intrinsic_noise=0, input_noise=0)
 
         prev_pitch_state = self.pitch_ring.s.copy()
         self.pitch_ring.step(pos=pitch_pos, intrinsic_noise=0, input_noise=0)
@@ -356,73 +462,25 @@ class BatHeadDirectionSystem:
         step = 0
         while (
             max(
-                np.max(np.abs(prev_azimuth_state - self.azimuth_ring.s)),
+                np.max(np.abs(prev_yaw_state - self.yaw_ring.s)),
                 np.max(np.abs(prev_pitch_state - self.pitch_ring.s)),
             )
             > tol
         ):
-            prev_azimuth_state = self.azimuth_ring.s.copy()
+            prev_yaw_state = self.yaw_ring.s.copy()
             prev_pitch_state = self.pitch_ring.s.copy()
-            self.azimuth_ring.step(pos=azimuth_pos, intrinsic_noise=0, input_noise=0)
+            self.yaw_ring.step(pos=yaw_pos, intrinsic_noise=0, input_noise=0)
             self.pitch_ring.step(pos=pitch_pos, intrinsic_noise=0, input_noise=0)
             if step >= max_iter:
                 raise RuntimeError("Exceed the prescribed recursion depth")
             step += 1
         print(f"Ran warm up for {step} steps")
 
-    def step(
-        self,
-        v_azimuth: float = 0,
-        v_pitch: float = 0,
-        pos_azimuth: float = None,
-        pos_pitch: float = None,
-    ):
-        intrinsic_noise_term = 0
-        previous_conj_state = self.conjunctive_neurons
-        if self.intrinsic_noise:
-            noise_amplitude = self.intrinsic_noise * np.sqrt(self.dt / self.tau)
-            intrinsic_noise_term = noise_amplitude * self.rng.normal(
-                size=self.conjunctive_neurons.shape
-            )
-        if pos_azimuth is not None and pos_pitch is not None:
-            feedback_vector = self.activation_weight_func(
-                self.conjunctive_angels,
-                np.array([pos_azimuth, pos_pitch])[np.newaxis, :],
-            )
-        else:
-            feedback_vector = np.zeros_like(self.conjunctive_neurons)
-
-        total_input = (
-            (
-                np.dot(self.pitch_weight_vectors, self.pitch_ring.s)
-                + np.dot(self.azimuth_weight_vectors, self.azimuth_ring.s)
-            )
-            * self.forward_strength
-            #+ feedback_vector * self.feedback_strength
-            - self.inhibition
-        )
-        rate_derivatives = -self.conjunctive_neurons + np.maximum(total_input, 0.0)
-
-        self.conjunctive_neurons = (
-            self.conjunctive_neurons
-            + (self.dt / self.tau) * rate_derivatives
-            + intrinsic_noise_term
-        )
-        self.azimuth_ring.step(
-            v_azimuth,
-            anchor_input=self.feedback_strength
-            * np.dot(self.azimuth_weight_vectors.T, feedback_vector),
-        )
-        self.pitch_ring.step(
-            v_pitch,
-            anchor_input=self.feedback_strength
-            * np.dot(self.pitch_weight_vectors.T, feedback_vector),
-        )
-
     def run_simulation(
         self,
         v: np.ndarray,
         dir: np.ndarray = None,
+        snapshots=1000,
     ) -> Dict[str, np.ndarray]:
 
         if v.ndim != 2 or v.shape[1] != 2:
@@ -435,36 +493,26 @@ class BatHeadDirectionSystem:
                 )
 
         n_steps = v.shape[0]
+        snapshot_indices = np.linspace(0, n_steps, snapshots, dtype=int)
 
         output_dict = {}
         output_dict["conj_cells"] = np.zeros((n_steps, self.n_conjunctive), dtype=float)
-        azimuth_rec_cells = list(self.rng.integers(0, self.n_azimuth, size=(9, 1)))
-        pitch_rec_cells = list(self.rng.integers(0, self.n_pitch, size=(9, 1)))
-        output_dict["azimuth_cells"] = np.zeros(
-            (n_steps, len(azimuth_rec_cells)), dtype=float
-        )
-        output_dict["pitch_cells"] = np.zeros(
-            (n_steps, len(pitch_rec_cells)), dtype=float
-        )
+        # yaw_rec_cells = list(self.rng.integers(0, self.n_yaw, size=(9, 1)))
+        # pitch_rec_cells = list(self.rng.integers(0, self.n_pitch, size=(9, 1)))
+        output_dict["yaw_cells"] = np.zeros((n_steps, self.n_yaw), dtype=float)
+        output_dict["pitch_cells"] = np.zeros((n_steps, self.n_pitch), dtype=float)
         output_dict["decoded_angle"] = np.zeros((n_steps, 2), dtype=float)
         for step_iter in tqdm(range(n_steps), desc="Running Simulation Steps"):
             if dir is not None:
-                self.step(*v[step_iter], *dir[step_iter])
+                self.step(v[step_iter], dir[step_iter])
             else:
-                self.step(*v[step_iter])
-            output_dict["conj_cells"][step_iter] = self.conjunctive_neurons
-            output_dict["azimuth_cells"][step_iter] = np.array(
-                [
-                    self.azimuth_ring.s[tuple(cell_index)]
-                    for cell_index in azimuth_rec_cells
-                ]
-            )
-            output_dict["pitch_cells"][step_iter] = np.array(
-                [self.pitch_ring.s[tuple(cell_index)] for cell_index in pitch_rec_cells]
-            )
+                self.step(v[step_iter])
+            output_dict["conj_cells"][step_iter] = self.conjunctive_neurons.copy()
+            output_dict["yaw_cells"][step_iter] = self.yaw_ring.s.copy()
+            output_dict["pitch_cells"][step_iter] = self.pitch_ring.s.copy()
             output_dict["decoded_angle"][step_iter] = np.stack(
                 [
-                    self.azimuth_ring.decode_orientation(),
+                    self.yaw_ring.decode_orientation(),
                     self.pitch_ring.decode_orientation(),
                 ]
             ).flatten()
