@@ -59,7 +59,7 @@ class HeadDirectionNetwork:
             )
 
         else:
-            gamma = 0.01 / np.asarray(n) / (size  * 6)
+            gamma = 0.01 / np.asarray(n) / (size * 6)
             a_weight = 1
             inhibition = 1
             self.kernel_func = (
@@ -283,7 +283,7 @@ class BatHeadDirectionSystem:
         dt=0.5e-3,
         intrinsic_noise=0,
         input_noise=0.1,
-        size=1/3,
+        size=1 / 3,
         tau_visual=None,
         eps=1e-8,
         rng: np.random.Generator = None,
@@ -325,7 +325,7 @@ class BatHeadDirectionSystem:
         self.activation_sigma = 0.1
         self.connectivity_sigma = 0.1
 
-        self.forward_strength = 0.5
+        self.forward_strength = 1
         self.anchor_strength = 1
         self.inhibition = 1
 
@@ -333,7 +333,7 @@ class BatHeadDirectionSystem:
 
         raw_yaw_conj_w = np.zeros((n_conjunctive, n_yaw), dtype=float)
         raw_pitch_conj_w = np.zeros((n_conjunctive, n_pitch), dtype=float)
-        self.conjunctive_angels = rng.random(size=(n_conjunctive, 2)) * 2 * np.pi
+        self.conjunctive_angels = rng.uniform(0, 2 * np.pi, size=(n_conjunctive, 2))
 
         for neuron_index, [yaw, pitch] in enumerate(self.conjunctive_angels):
             raw_yaw_conj_w[neuron_index] = self.yaw_ring.encode_orientation(
@@ -343,15 +343,21 @@ class BatHeadDirectionSystem:
                 pitch, self.connectivity_sigma
             )
 
-
-        upward_clearence = 0.2
-        self.anchor_angles = (
-            rng.uniform(
-                low=[0, upward_clearence],
-                high=[2 * np.pi, (1 - upward_clearence) * np.pi],
-                size=(n_anchor, 2),
-            )
-            * np.array([2 * np.pi, np.pi - 0.1])[np.newaxis, :]
+        upward_clearence = 0.5
+        self.anchor_angles = np.stack(
+            [
+                rng.uniform(
+                    low=0,
+                    high=2 * np.pi,
+                    size=(n_anchor),
+                ),
+                rng.uniform(
+                    low=-upward_clearence * np.pi / 2,
+                    high=upward_clearence * np.pi / 2,
+                    size=(n_anchor),
+                ),  # * (1 - 2* rng.integers(0,1,size=(n_anchor)))
+            ],
+            axis=-1,
         )
         self.visual_trace = np.zeros(n_anchor, dtype=float)
 
@@ -359,13 +365,13 @@ class BatHeadDirectionSystem:
         raw_pitch_anchor_w = np.zeros((n_pitch, n_anchor), dtype=float)
 
         for neuron_index, [azimuth, polar] in enumerate(self.anchor_angles):
-            for [yaw, pitch] in sphere_to_toroid(azimuth, polar):
-                raw_yaw_anchor_w[..., neuron_index] = self.yaw_ring.encode_orientation(
-                    yaw, self.connectivity_sigma
-                )
-                raw_pitch_anchor_w[..., neuron_index] = (
-                    self.pitch_ring.encode_orientation(pitch, self.connectivity_sigma)
-                )
+            #for [yaw, pitch] in sphere_to_toroid(azimuth, polar):
+            raw_yaw_anchor_w[..., neuron_index] = self.yaw_ring.encode_orientation(
+                azimuth, self.connectivity_sigma
+            )
+            raw_pitch_anchor_w[..., neuron_index] = (
+                self.pitch_ring.encode_orientation(polar, self.connectivity_sigma)
+            )
 
         self._yaw_fwd = raw_yaw_conj_w
         self._pitch_fwd = raw_pitch_conj_w
@@ -388,6 +394,7 @@ class BatHeadDirectionSystem:
         self,
         v,
         dir: float = None,
+        inverted: bool = None,
     ):
         if dir is not None:
             raw_visual = self.activation_weight_func(
@@ -396,6 +403,9 @@ class BatHeadDirectionSystem:
             )
         else:
             raw_visual = np.zeros_like(self.visual_trace)
+
+        inverted = inverted or True
+        inverted = float(inverted)
 
         yaw_overlap = np.dot(self._yaw_fwd, self.yaw_ring.s)
         pitch_overlap = np.dot(self._pitch_fwd, self.pitch_ring.s)
@@ -432,12 +442,12 @@ class BatHeadDirectionSystem:
             self.anchor_strength
             * anchor_modulation
             * np.dot(self._yaw_anchor_w, self.visual_trace)
-        )
+        ) * inverted
         pi_anchor_input = (
             self.anchor_strength
             * anchor_modulation
             * np.dot(self._pitch_anchor_w, self.visual_trace)
-        )
+        ) * inverted
 
         self.yaw_ring.step(v[0], anchor_input=az_anchor_input)
         self.pitch_ring.step(v[1], anchor_input=pi_anchor_input)
@@ -480,7 +490,7 @@ class BatHeadDirectionSystem:
         self,
         v: np.ndarray,
         dir: np.ndarray = None,
-        snapshots=1000,
+        inverted: np.ndarray = None,
     ) -> Dict[str, np.ndarray]:
 
         if v.ndim != 2 or v.shape[1] != 2:
@@ -493,7 +503,6 @@ class BatHeadDirectionSystem:
                 )
 
         n_steps = v.shape[0]
-        snapshot_indices = np.linspace(0, n_steps, snapshots, dtype=int)
 
         output_dict = {}
         output_dict["conj_cells"] = np.zeros((n_steps, self.n_conjunctive), dtype=float)
@@ -503,10 +512,13 @@ class BatHeadDirectionSystem:
         output_dict["pitch_cells"] = np.zeros((n_steps, self.n_pitch), dtype=float)
         output_dict["decoded_angle"] = np.zeros((n_steps, 2), dtype=float)
         for step_iter in tqdm(range(n_steps), desc="Running Simulation Steps"):
+            kwargs = {}
             if dir is not None:
-                self.step(v[step_iter], dir[step_iter])
-            else:
-                self.step(v[step_iter])
+                kwargs["dir"] = dir[step_iter]
+            if inverted is not None:
+                kwargs["inverted"] = inverted[step_iter]
+
+            self.step(v[step_iter],**kwargs)
             output_dict["conj_cells"][step_iter] = self.conjunctive_neurons.copy()
             output_dict["yaw_cells"][step_iter] = self.yaw_ring.s.copy()
             output_dict["pitch_cells"][step_iter] = self.pitch_ring.s.copy()

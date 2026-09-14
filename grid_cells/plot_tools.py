@@ -82,6 +82,11 @@ def get_plot_grid(n_plots, figsize=(4, 4), **kwargs):
     return fig, axes
 
 
+def wrap_to_pi(angle):
+    """Wraps any angle to the [-pi, pi] range."""
+    return (angle + np.pi) % (2 * np.pi) - np.pi
+
+
 def angular_error(decoded, true):
     return np.arctan2(np.sin(decoded - true), np.cos(decoded - true)) / np.pi
 
