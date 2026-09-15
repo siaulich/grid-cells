@@ -220,21 +220,21 @@ class HeadDirectionNetwork:
     def _record_variables(self, output_dict, step_iter):
         output_dict["decoded_angle"][step_iter] = self.decode_orientation()
 
-    def decode_orientation(self):
+    def decode_orientation(self, s = None):
         """Decode the activity bump position into one angle per axis.
 
         Returns:
         - np.array([angle_x, angle_y]): Estimated angles in radians [0, 2*pi).
         """
-        s_2d = self.s
-        shape = s_2d.shape
+        s = self.s if s is None else s
+        shape = s.shape
 
         angle_list = []
         for axis_iter, nx in enumerate(shape):
             x_phases = 2 * np.pi * np.arange(nx) / nx
 
             profile_x = np.sum(
-                s_2d, axis=tuple([i for i in range(len(shape)) if i != axis_iter])
+                s, axis=tuple([i for i in range(len(shape)) if i != axis_iter])
             )
 
             mean_x_angle = np.angle(np.sum(profile_x * np.exp(1j * x_phases)))
@@ -318,6 +318,7 @@ class BatHeadDirectionSystem:
         self.tau_visual = tau_visual if tau_visual is not None else 2 * tau
         self.eps = eps
         self.gravity_input = gravity_input
+        self.learn_rate = 1e-1
 
         self.n_conjunctive = n_conjunctive
         self.n_anchor = n_anchor
@@ -344,6 +345,9 @@ class BatHeadDirectionSystem:
             raw_pitch_conj_w[neuron_index] = self.pitch_ring.encode_orientation(
                 pitch, self.connectivity_sigma
             )
+        self._yaw_fwd = raw_yaw_conj_w
+        self._pitch_fwd = raw_pitch_conj_w
+
 
         upward_clearence = 0.5
         self.anchor_angles = np.stack(
@@ -363,38 +367,31 @@ class BatHeadDirectionSystem:
         )
         self.visual_trace = np.zeros(n_anchor, dtype=float)
 
-        raw_yaw_anchor_w = np.zeros((n_yaw, n_anchor), dtype=float)
-        raw_pitch_anchor_w = np.zeros((n_pitch, n_anchor), dtype=float)
-
-        for neuron_index, [azimuth, polar] in enumerate(self.anchor_angles):
-            if not gravity_input:
-                for [yaw, pitch] in sphere_to_toroid(azimuth, polar):
-                    raw_yaw_anchor_w[..., neuron_index] = self.yaw_ring.encode_orientation(
-                        yaw, self.connectivity_sigma
-                    )
-                    raw_pitch_anchor_w[..., neuron_index] = (
-                        self.pitch_ring.encode_orientation(pitch, self.connectivity_sigma)
-                    )
-            else:
-                raw_yaw_anchor_w[..., neuron_index] = self.yaw_ring.encode_orientation(
-                    azimuth, self.connectivity_sigma
-                )
-                raw_pitch_anchor_w[..., neuron_index] = (
-                    self.pitch_ring.encode_orientation(polar, self.connectivity_sigma)
-                )
-
-
-        self._yaw_fwd = raw_yaw_conj_w
-        self._pitch_fwd = raw_pitch_conj_w
+        raw_yaw_anchor_w = rng.uniform(size=(n_yaw, n_anchor))
+        raw_pitch_anchor_w = rng.uniform(size=(n_pitch, n_anchor))
 
         self._yaw_anchor_w = raw_yaw_anchor_w
         self._pitch_anchor_w = raw_pitch_anchor_w
+
+        self.normalisze_anchors()
+        self._yaw_anchor_w *= 0.1
+        self._pitch_anchor_w *= 0.1
+
 
         self.intrinsic_noise = intrinsic_noise
         self.input_noise = input_noise
 
         self.speed_gate_k = 2
         self.speed_gate_thr = 10
+
+    def normalisze_anchors(self):
+        yaw_anchor_w_normalisation = np.sum(self._yaw_anchor_w,axis=0,keepdims=True)
+        pitch_anchor_w_normalisation = np.sum(self._pitch_anchor_w,axis=0,keepdims=True)
+        yaw_anchor_w_normalisation = np.clip(yaw_anchor_w_normalisation,1,None)
+        pitch_anchor_w_normalisation = np.clip(pitch_anchor_w_normalisation,1,None)
+
+        self._yaw_anchor_w /= yaw_anchor_w_normalisation + self.eps
+        self._pitch_anchor_w /= pitch_anchor_w_normalisation + self.eps
 
     def activation_weight_func(self, position, anchor):
         err = angular_error(position, anchor)
@@ -420,7 +417,12 @@ class BatHeadDirectionSystem:
             inverted = float(~inverted)
         else:
             inverted = 1
-        
+
+        raw_visual *= inverted
+
+        yaw_anchor_weight_update = self.learn_rate * self.visual_trace[np.newaxis,:] * self.yaw_ring.s[:,np.newaxis]
+        pitch_anchor_weight_update = self.learn_rate * self.visual_trace[np.newaxis,:] * self.pitch_ring.s[:,np.newaxis]
+
 
         yaw_overlap = np.dot(self._yaw_fwd, self.yaw_ring.s)
         pitch_overlap = np.dot(self._pitch_fwd, self.pitch_ring.s)
@@ -448,21 +450,18 @@ class BatHeadDirectionSystem:
             raw_visual - self.visual_trace
         )
 
-        speed = np.linalg.norm(v)
-        anchor_modulation = 1.0 / (
-            1.0 + np.exp(self.speed_gate_k * (speed - self.speed_gate_thr))
-        )
+        self._yaw_anchor_w += yaw_anchor_weight_update * self.dt
+        self._pitch_anchor_w += pitch_anchor_weight_update * self.dt
+        self.normalisze_anchors()
 
         az_anchor_input = (
             self.anchor_strength
-            * anchor_modulation
             * np.dot(self._yaw_anchor_w, self.visual_trace)
-        ) * inverted
+        )
         pi_anchor_input = (
             self.anchor_strength
-            * anchor_modulation
             * np.dot(self._pitch_anchor_w, self.visual_trace)
-        ) * inverted
+        )
 
         self.yaw_ring.step(v[0], anchor_input=az_anchor_input)
         self.pitch_ring.step(v[1], anchor_input=pi_anchor_input)
@@ -506,6 +505,7 @@ class BatHeadDirectionSystem:
         v: np.ndarray,
         dir: np.ndarray = None,
         inverted: np.ndarray = None,
+        save_weights = False
     ) -> Dict[str, np.ndarray]:
 
         if v.ndim != 2 or v.shape[1] != 2:
@@ -523,7 +523,12 @@ class BatHeadDirectionSystem:
         output_dict["conj_cells"] = np.zeros((n_steps, self.n_conjunctive), dtype=float)
         output_dict["yaw_cells"] = np.zeros((n_steps, self.n_yaw), dtype=float)
         output_dict["pitch_cells"] = np.zeros((n_steps, self.n_pitch), dtype=float)
+        output_dict["visual_trace"] = np.zeros((n_steps, self.n_anchor), dtype=float)
         output_dict["decoded_angle"] = np.zeros((n_steps, 2), dtype=float)
+        if save_weights:
+            output_dict["yaw_anchor_weights"] = np.zeros((n_steps,*self._yaw_anchor_w.shape),dtype=float)
+            output_dict["pitch_anchor_weights"] = np.zeros((n_steps,*self._pitch_anchor_w.shape),dtype=float)
+
         for step_iter in tqdm(range(n_steps), desc="Running Simulation Steps"):
             kwargs = {}
             if dir is not None:
@@ -541,5 +546,9 @@ class BatHeadDirectionSystem:
                     self.pitch_ring.decode_orientation(),
                 ]
             ).flatten()
+            output_dict["visual_trace"][step_iter] = self.visual_trace
+            if save_weights:
+                output_dict["yaw_anchor_weights"][step_iter] = self._yaw_anchor_w
+                output_dict["pitch_anchor_weights"][step_iter] = self._pitch_anchor_w
 
         return output_dict
