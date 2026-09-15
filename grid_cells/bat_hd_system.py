@@ -287,6 +287,7 @@ class BatHeadDirectionSystem:
         tau_visual=None,
         eps=1e-8,
         rng: np.random.Generator = None,
+        gravity_input = True,
         **kwargs,
     ):
         rng = rng or np.random.default_rng(seed=0)
@@ -316,6 +317,7 @@ class BatHeadDirectionSystem:
         self.dt = dt
         self.tau_visual = tau_visual if tau_visual is not None else 2 * tau
         self.eps = eps
+        self.gravity_input = gravity_input
 
         self.n_conjunctive = n_conjunctive
         self.n_anchor = n_anchor
@@ -365,13 +367,22 @@ class BatHeadDirectionSystem:
         raw_pitch_anchor_w = np.zeros((n_pitch, n_anchor), dtype=float)
 
         for neuron_index, [azimuth, polar] in enumerate(self.anchor_angles):
-            #for [yaw, pitch] in sphere_to_toroid(azimuth, polar):
-            raw_yaw_anchor_w[..., neuron_index] = self.yaw_ring.encode_orientation(
-                azimuth, self.connectivity_sigma
-            )
-            raw_pitch_anchor_w[..., neuron_index] = (
-                self.pitch_ring.encode_orientation(polar, self.connectivity_sigma)
-            )
+            if not gravity_input:
+                for [yaw, pitch] in sphere_to_toroid(azimuth, polar):
+                    raw_yaw_anchor_w[..., neuron_index] = self.yaw_ring.encode_orientation(
+                        yaw, self.connectivity_sigma
+                    )
+                    raw_pitch_anchor_w[..., neuron_index] = (
+                        self.pitch_ring.encode_orientation(pitch, self.connectivity_sigma)
+                    )
+            else:
+                raw_yaw_anchor_w[..., neuron_index] = self.yaw_ring.encode_orientation(
+                    azimuth, self.connectivity_sigma
+                )
+                raw_pitch_anchor_w[..., neuron_index] = (
+                    self.pitch_ring.encode_orientation(polar, self.connectivity_sigma)
+                )
+
 
         self._yaw_fwd = raw_yaw_conj_w
         self._pitch_fwd = raw_pitch_conj_w
@@ -404,8 +415,12 @@ class BatHeadDirectionSystem:
         else:
             raw_visual = np.zeros_like(self.visual_trace)
 
-        inverted = inverted or True
-        inverted = float(inverted)
+        if self.gravity_input:
+            inverted = inverted if inverted is not None else False
+            inverted = float(~inverted)
+        else:
+            inverted = 1
+        
 
         yaw_overlap = np.dot(self._yaw_fwd, self.yaw_ring.s)
         pitch_overlap = np.dot(self._pitch_fwd, self.pitch_ring.s)
@@ -506,8 +521,6 @@ class BatHeadDirectionSystem:
 
         output_dict = {}
         output_dict["conj_cells"] = np.zeros((n_steps, self.n_conjunctive), dtype=float)
-        # yaw_rec_cells = list(self.rng.integers(0, self.n_yaw, size=(9, 1)))
-        # pitch_rec_cells = list(self.rng.integers(0, self.n_pitch, size=(9, 1)))
         output_dict["yaw_cells"] = np.zeros((n_steps, self.n_yaw), dtype=float)
         output_dict["pitch_cells"] = np.zeros((n_steps, self.n_pitch), dtype=float)
         output_dict["decoded_angle"] = np.zeros((n_steps, 2), dtype=float)
