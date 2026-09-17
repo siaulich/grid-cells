@@ -316,7 +316,7 @@ class BatHeadDirectionSystem:
         self.tau_visual = tau_visual if tau_visual is not None else 2 * tau
         self.eps = eps
         if ignore_inversion:
-            gravity_gated = True 
+            gravity_gated = True
         self.ignore_inversion = ignore_inversion
         self.gravity_gated = gravity_gated
         self.learn_rate = 5e-2
@@ -330,7 +330,7 @@ class BatHeadDirectionSystem:
         self.connectivity_sigma = 0.1
 
         self.forward_strength = 1
-        self.anchor_strength = 1# if gravity_gated else 0.5
+        self.anchor_strength = 1  # if gravity_gated else 0.5
         self.inhibition = 1
 
         self.conjunctive_neurons = np.zeros(n_conjunctive, dtype=float)
@@ -387,8 +387,12 @@ class BatHeadDirectionSystem:
         self.speed_gate_thr = 1
 
     def normalisze_anchors(self):
-        self._yaw_anchor_w /= np.clip(np.sum(self._yaw_anchor_w, axis=0, keepdims=True), 1, None)
-        self._pitch_anchor_w /= np.clip(np.sum(self._pitch_anchor_w, axis=0, keepdims=True), 1, None)
+        self._yaw_anchor_w /= np.clip(
+            np.sum(self._yaw_anchor_w, axis=0, keepdims=True), 1, None
+        )
+        self._pitch_anchor_w /= np.clip(
+            np.sum(self._pitch_anchor_w, axis=0, keepdims=True), 1, None
+        )
 
     def activation_weight_func(self, position, anchor):
         err = angular_error(position, anchor)
@@ -420,7 +424,6 @@ class BatHeadDirectionSystem:
             )
             upright = upright.astype(float)
 
-
         speed = np.linalg.norm(v)
         anchor_modulation = 1.0 / (
             1.0 + np.exp(self.speed_gate_k * (speed - self.speed_gate_thr))
@@ -449,7 +452,7 @@ class BatHeadDirectionSystem:
             conj_noise_term = noise_amp * self.rng.normal(
                 size=self.conjunctive_neurons.shape
             )
-    
+
         yaw_overlap = np.dot(self._yaw_fwd, self.yaw_ring.s)
         pitch_overlap = np.dot(self._pitch_fwd, self.pitch_ring.s)
         forward_input = self.forward_strength * (yaw_overlap + pitch_overlap)
@@ -457,7 +460,8 @@ class BatHeadDirectionSystem:
 
         self.conjunctive_neurons = (
             self.conjunctive_neurons
-            + (self.dt / self.tau) * (np.maximum(total_input, 0.0) -self.conjunctive_neurons) 
+            + (self.dt / self.tau)
+            * (np.maximum(total_input, 0.0) - self.conjunctive_neurons)
             + conj_noise_term
         )
 
@@ -535,7 +539,6 @@ class BatHeadDirectionSystem:
 
         n_steps = v.shape[0]
         record_steps = (n_steps + interval - 1) // interval
-
 
         output_dict = {}
         output_dict["anchor_angles"] = self.anchor_angles

@@ -188,7 +188,6 @@ def generate_bat_flight(
     max_pitch = np.radians(max_pitch_deg)
     pitch_clearance = np.radians(pitch_clearance_deg)
 
-
     # Arrays to store state
     position = np.zeros((n_steps, 3))
     velocity = np.zeros((n_steps, 3))
@@ -295,7 +294,6 @@ def generate_bat_flight(
             ]
         )
 
-
         repulsion_angles = np.array(
             [np.dot(repulsion_force, u_azimuth), np.dot(repulsion_force, u_pitch)]
         )
@@ -356,7 +354,7 @@ def generate_bat_flight(
     return {
         "pos": position,
         "vel": velocity,
-        "speed": np.linalg.norm(velocity,axis=-1),
+        "speed": np.linalg.norm(velocity, axis=-1),
         "dir_torus": toroid_heading,
         "dir_sphere": sphere_heading,
         "inverted": invertedness.astype(bool),
