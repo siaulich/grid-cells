@@ -285,6 +285,7 @@ class BatHeadDirectionSystem:
         eps=1e-8,
         rng: np.random.Generator = None,
         gravity_gated=False,
+        ignore_inversion=False,
         **kwargs,
     ):
         rng = rng or np.random.default_rng(seed=0)
@@ -314,6 +315,9 @@ class BatHeadDirectionSystem:
         self.dt = dt
         self.tau_visual = tau_visual if tau_visual is not None else 2 * tau
         self.eps = eps
+        if ignore_inversion:
+            gravity_gated = True 
+        self.ignore_inversion = ignore_inversion
         self.gravity_gated = gravity_gated
         self.learn_rate = 5e-2
 
