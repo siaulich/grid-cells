@@ -126,6 +126,9 @@ def generate_bat_flight(
     min_speed: float = 1.2,
     max_speed: float = 5.0,
     wall_repulsion_strength: float = 5,
+    max_pitch_deg: float = 80.0,
+    pitch_clearance_deg: float = 15.0,
+    pitch_repulsion_strength: float = 5.0,
     rng: Optional[np.random.Generator] = None,
     initial_position=None,
     initial_speed=None,
@@ -182,6 +185,9 @@ def generate_bat_flight(
     turn_clearance = boxsize / 8
     slow_clearance = boxsize / 8
     n_steps = int(np.ceil(T / dt))
+    max_pitch = np.radians(max_pitch_deg)
+    pitch_clearance = np.radians(pitch_clearance_deg)
+
 
     # Arrays to store state
     position = np.zeros((n_steps, 3))
@@ -241,6 +247,17 @@ def generate_bat_flight(
 
         return wall_repulsion_strength * (force_lower - force_upper)
 
+    def pitch_repulsion(pitch: float) -> float:
+        """Soft restoring torque that keeps pitch within [-max_pitch, max_pitch]."""
+        eps = 1e-3
+        dist_lower = np.clip(pitch - (-max_pitch), eps, pitch_clearance)
+        dist_upper = np.clip(max_pitch - pitch, eps, pitch_clearance)
+
+        force_lower = (1.0 / dist_lower) - (1.0 / pitch_clearance)
+        force_upper = (1.0 / dist_upper) - (1.0 / pitch_clearance)
+
+        return pitch_repulsion_strength * (force_lower - force_upper)
+
     current_azimuth, current_pitch = compute_spherical_coordinates(current_heading)
 
     # Steering is now natively [d_azimuth, d_pitch]
@@ -256,7 +273,7 @@ def generate_bat_flight(
     ou_steer_decay = np.exp(-dt / steering_correlation_time)
     ou_steer_noise_scale = turning_std * np.sqrt(1 - ou_steer_decay**2)
 
-    max_angular_vel = 20.0  # rad/s
+    max_angular_vel = 150.0  # rad/s
 
     for step in tqdm.tqdm(range(1, n_steps)):
         h_x = np.cos(current_pitch) * np.cos(current_azimuth)
@@ -278,9 +295,11 @@ def generate_bat_flight(
             ]
         )
 
+
         repulsion_angles = np.array(
             [np.dot(repulsion_force, u_azimuth), np.dot(repulsion_force, u_pitch)]
         )
+        repulsion_angles[1] += pitch_repulsion(current_pitch)
 
         turn_noise = ou_steer_noise_scale * rng.normal(size=2)
         if np.any(facing_mask):
@@ -337,6 +356,7 @@ def generate_bat_flight(
     return {
         "pos": position,
         "vel": velocity,
+        "speed": np.linalg.norm(velocity,axis=-1),
         "dir_torus": toroid_heading,
         "dir_sphere": sphere_heading,
         "inverted": invertedness.astype(bool),
