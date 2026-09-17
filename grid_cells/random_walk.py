@@ -273,7 +273,7 @@ def generate_bat_flight(
     ou_steer_decay = np.exp(-dt / steering_correlation_time)
     ou_steer_noise_scale = turning_std * np.sqrt(1 - ou_steer_decay**2)
 
-    max_angular_vel = 150.0  # rad/s
+    max_angular_vel = 50  # rad/s
 
     for step in tqdm.tqdm(range(1, n_steps)):
         h_x = np.cos(current_pitch) * np.cos(current_azimuth)
@@ -333,7 +333,7 @@ def generate_bat_flight(
                 )
             )
             boundary_factor = np.clip(boundary_distance / slow_clearance, 0.0, 1.0)
-            braking_rate = 5.0
+            braking_rate = 1.0
             current_speed -= braking_rate * (1.0 - boundary_factor) * current_speed * dt
             current_speed = np.clip(current_speed, 0.0, max_speed)
         else:
