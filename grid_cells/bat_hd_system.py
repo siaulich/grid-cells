@@ -286,6 +286,7 @@ class BatHeadDirectionSystem:
         rng: np.random.Generator = None,
         gravity_gated=False,
         ignore_inversion=False,
+        anchor_strength = 1,
         **kwargs,
     ):
         rng = rng or np.random.default_rng(seed=0)
@@ -330,7 +331,7 @@ class BatHeadDirectionSystem:
         self.connectivity_sigma = 0.1
 
         self.forward_strength = 1
-        self.anchor_strength = 1  # if gravity_gated else 0.5
+        self.anchor_strength = anchor_strength  # if gravity_gated else 0.5
         self.inhibition = 1
 
         self.conjunctive_neurons = np.zeros(n_conjunctive, dtype=float)
@@ -480,9 +481,8 @@ class BatHeadDirectionSystem:
         self._yaw_anchor_w += yaw_anchor_weight_update * self.dt
         self._pitch_anchor_w += pitch_anchor_weight_update * self.dt
         self.normalisze_anchors()
-
         self.yaw_ring.step(v[0], anchor_input=yw_anchor_input)
-        self.pitch_ring.step(v[1], anchor_input=pi_anchor_input)
+        self.pitch_ring.step((1 - 2 * upright.flatten()) * v[1], anchor_input=pi_anchor_input)
 
     def warm_up(
         self, tol=1e-5, max_iter=100000, initial_dir: np.ndarray = np.array([0, 0])

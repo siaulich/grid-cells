@@ -115,6 +115,18 @@ def compute_spherical_coordinates(heading):
     return np.stack((azimuth, pitch), axis=-1)
 
 
+def compute_heading_toroid(heading):
+    h_x = np.cos(heading[...,1]) * np.cos(heading[...,0])
+    h_y = np.cos(heading[...,1]) * np.sin(heading[...,0])
+    h_z = np.sin(heading[...,1])
+    return np.stack([h_x, h_y, h_z],axis=-1)
+
+def sphere_from_toroid(heading):
+    return compute_spherical_coordinates(compute_heading_toroid(heading))
+
+
+
+
 def generate_bat_flight(
     T: float,
     dt: float = 0.1e-3,

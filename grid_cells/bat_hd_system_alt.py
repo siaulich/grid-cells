@@ -282,9 +282,11 @@ class BatHeadDirectionSystem:
         size=1 / 3,
         tau_visual=None,
         eps=1e-8,
-        forward_strength = 0.7,
-        anchor_strength = 0.8,
-        connect_vc_directly = False,
+        forward_strength=0.7,
+        anchor_strength=0.8,
+        feedback_strength=1,
+        connect_vc_directly=False,
+        gravity_gated = False,
         rng: np.random.Generator = None,
         **kwargs,
     ):
@@ -321,12 +323,14 @@ class BatHeadDirectionSystem:
         self.n_yaw = n_yaw
         self.n_pitch = n_pitch
         self.rng = rng
-        self.activation_sigma = 0.1
-        self.connectivity_sigma = 0.1
+        self.activation_sigma = 0.2
+        self.connectivity_sigma = 0.2
         self.connect_vc_directly = connect_vc_directly
+        self.gravity_gated = gravity_gated
 
         self.forward_strength = forward_strength
         self.anchor_strength = anchor_strength
+        self.feedback_strength = feedback_strength
         self.inhibition = 1
 
         self.visual_trace = np.zeros(n_conjunctive, dtype=float)
@@ -400,12 +404,22 @@ class BatHeadDirectionSystem:
         else:
             raw_visual = np.zeros_like(self.visual_trace)
 
+
+        if self.gravity_gated and inverted is not None:
+            upright = np.array([True], dtype=bool)[np.newaxis, :] ^ (
+                inverted if inverted is not None else False
+            )
+            upright = upright.astype(float)
+        else:
+            upright = 1
+
+
         speed = np.linalg.norm(v)
         anchor_modulation = 1.0 / (
             1.0 + np.exp(self.speed_gate_k * (speed - self.speed_gate_thr))
         )
 
-        raw_visual = raw_visual * anchor_modulation
+        raw_visual = self.feedback_strength * raw_visual * anchor_modulation * upright
 
         # yaw_ring = self.yaw_ring.s.copy()
         # pitch_ring = self.pitch_ring.s.copy()
@@ -431,13 +445,15 @@ class BatHeadDirectionSystem:
 
         yaw_overlap = np.dot(self._yaw_fwd, self.yaw_ring.s)
         pitch_overlap = np.dot(self._pitch_fwd, self.pitch_ring.s)
-        forward_input = self.forward_strength * (yaw_overlap + pitch_overlap) + (self.visual_trace if not self.connect_vc_directly else 0)
+        forward_input = self.forward_strength * (yaw_overlap + pitch_overlap) + (
+            self.visual_trace if not self.connect_vc_directly else 0
+        )
         total_input = forward_input - self.inhibition
 
         if self.connect_vc_directly:
             feedback = self.visual_trace
         else:
-            feedback =  self.conjunctive_neurons
+            feedback = self.conjunctive_neurons
 
         yw_anchor_input = self.anchor_strength * np.sum(
             self._yaw_anchor_w * feedback, axis=(-1)
@@ -448,7 +464,7 @@ class BatHeadDirectionSystem:
         # self._yaw_anchor_w += yaw_anchor_weight_update * self.dt
         # self._pitch_anchor_w += pitch_anchor_weight_update * self.dt
         # self.normalisze_anchors()
-    
+
         self.conjunctive_neurons = (
             self.conjunctive_neurons
             + (self.dt / self.tau)
